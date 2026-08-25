@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#8bc6df" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Horizon Proto 0.2</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main id="game">
+    <canvas id="world" aria-label="Monde 3D procédural Horizon"></canvas>
+
+    <section id="hud" aria-live="polite">
+      <div class="brand">HORIZON <span>0.2</span></div>
+      <div id="biome">Prairie</div>
+      <div id="coordinates">X 0 · Z 0</div>
+      <div id="chunk-count">25 chunks actifs</div>
+      <div id="discovered-count">0 découverts</div>
+      <div id="seed">Seed —</div>
+    </section>
+
+    <section id="intro">
+      <strong>Va voir ce qu'il y a derrière l'horizon.</strong>
+      <span>Joystick à gauche · glisse à droite pour tourner la caméra.</span>
+    </section>
+
+    <div id="joystick" aria-label="Joystick de déplacement">
+      <div id="stick"></div>
+    </div>
+
+    <div id="actions">
+      <button id="run" type="button" aria-label="Maintenir pour courir">
+        <span>✦</span>
+        COURIR
+      </button>
+      <button id="new-world" type="button">NOUVEAU</button>
+    </div>
+
+    <div id="loading">
+      <div class="loading-mark">◌</div>
+      <strong>HORIZON</strong>
+      <span>Le monde prend forme…</span>
+    </div>
+  </main>
+
+  <script type="module" src="./main.mjs"></script>
+</body>
+</html>

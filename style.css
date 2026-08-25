@@ -1,0 +1,263 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #0d1820;
+  font-family: Inter, ui-rounded, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  touch-action: none;
+}
+
+button {
+  font: inherit;
+}
+
+#game {
+  position: relative;
+  width: 100vw;
+  height: 100dvh;
+  overflow: hidden;
+  background: #8bc6df;
+}
+
+#world {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#hud {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+  min-width: 126px;
+  padding: 10px 12px 9px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 14px;
+  color: rgba(255,255,255,.92);
+  background: rgba(20, 32, 38, .38);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  font-size: 11px;
+  line-height: 1.5;
+  pointer-events: none;
+  text-shadow: 0 1px 3px rgba(0,0,0,.2);
+}
+
+.brand {
+  margin-bottom: 3px;
+  font-weight: 900;
+  letter-spacing: .14em;
+}
+
+.brand span {
+  opacity: .55;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+#biome {
+  font-weight: 800;
+  font-size: 12px;
+  color: white;
+}
+
+#coordinates,
+#chunk-count,
+#discovered-count,
+#seed {
+  opacity: .76;
+}
+
+#intro {
+  position: absolute;
+  top: max(18px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(64vw, 420px);
+  color: white;
+  text-align: center;
+  text-shadow: 0 2px 8px rgba(0,0,0,.35);
+  pointer-events: none;
+  animation: fadeIntro 8s forwards;
+}
+
+#intro strong,
+#intro span {
+  display: block;
+}
+
+#intro strong {
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+#intro span {
+  margin-top: 6px;
+  font-size: 11px;
+  opacity: .82;
+}
+
+@keyframes fadeIntro {
+  0%, 68% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+#joystick {
+  position: absolute;
+  left: max(20px, env(safe-area-inset-left));
+  bottom: max(24px, calc(env(safe-area-inset-bottom) + 10px));
+  width: 124px;
+  height: 124px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,.13), rgba(10,20,26,.28));
+  border: 1.5px solid rgba(255,255,255,.25);
+  box-shadow: inset 0 0 25px rgba(0,0,0,.08);
+  backdrop-filter: blur(5px);
+  touch-action: none;
+}
+
+#joystick::before,
+#joystick::after {
+  content: "";
+  position: absolute;
+  background: rgba(255,255,255,.12);
+}
+
+#joystick::before {
+  left: 50%;
+  top: 15%;
+  width: 1px;
+  height: 70%;
+}
+
+#joystick::after {
+  top: 50%;
+  left: 15%;
+  height: 1px;
+  width: 70%;
+}
+
+#stick {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  margin-left: -27px;
+  margin-top: -27px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.83);
+  border: 2px solid rgba(255,255,255,.94);
+  box-shadow: 0 5px 18px rgba(0,0,0,.18);
+  transform: translate(0, 0);
+}
+
+#actions {
+  position: absolute;
+  right: max(18px, env(safe-area-inset-right));
+  bottom: max(27px, calc(env(safe-area-inset-bottom) + 11px));
+  display: grid;
+  gap: 11px;
+  justify-items: end;
+}
+
+#actions button {
+  min-height: 50px;
+  border: 1px solid rgba(255,255,255,.28);
+  color: white;
+  background: rgba(18, 30, 37, .38);
+  backdrop-filter: blur(9px);
+  box-shadow: 0 5px 16px rgba(0,0,0,.09);
+  font-weight: 900;
+  font-size: 10px;
+  letter-spacing: .1em;
+}
+
+#run {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+}
+
+#run span {
+  display: block;
+  font-size: 17px;
+  line-height: 1;
+  margin-bottom: 3px;
+}
+
+#new-world {
+  padding: 0 15px;
+  border-radius: 999px;
+  opacity: .8;
+}
+
+#actions button:active,
+#actions button.active {
+  background: rgba(255,255,255,.86);
+  color: #15242d;
+}
+
+#loading {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-content: center;
+  gap: 5px;
+  color: white;
+  background: linear-gradient(#8bc6df, #d9d5a5);
+  text-align: center;
+  letter-spacing: .09em;
+}
+
+#loading .loading-mark {
+  font-size: 36px;
+  animation: spin 1.4s linear infinite;
+}
+
+#loading strong {
+  font-size: 18px;
+}
+
+#loading span {
+  font-size: 11px;
+  letter-spacing: .02em;
+  opacity: .75;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 430px) {
+  #intro {
+    top: 98px;
+    width: 78vw;
+  }
+
+  #hud {
+    font-size: 10px;
+  }
+
+  #joystick {
+    width: 116px;
+    height: 116px;
+  }
+
+  #run {
+    width: 70px;
+    height: 70px;
+  }
+}
