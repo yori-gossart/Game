@@ -1,4 +1,4 @@
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.185.1/+esm";
+import * as THREE from "./vendor/three/three.module.min.js";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -21,16 +21,39 @@ const renderer = new THREE.WebGLRenderer({
   alpha: false
 });
 
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.35));
+// Paliers de résolution : on dégrade la densité de pixels avant la qualité visuelle.
+const PIXEL_RATIO_STEPS = [1.35, 1.15, 1.0, 0.85];
+let pixelStep = 0;
+
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, PIXEL_RATIO_STEPS[0]));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x8bc6df);
-scene.fog = new THREE.Fog(0x9cc5cd, 50, 105);
+const SKY_COLOR = 0x8bc6df;
+const FOG_COLOR = 0x9cc5cd;
 
-const camera = new THREE.PerspectiveCamera(56, 1, 0.1, 180);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(SKY_COLOR);
+
+const CHUNK_SIZE = 32;
+const CHUNK_RADIUS = 2;
+const CHUNK_SEGMENTS = 12;
+const PLAYER_SPEED = 6.2;
+const CAMERA_DISTANCE = 13;
+const RUN_MULTIPLIER = 1.8;
+const SAVE_KEY = "horizon-proto-0.2-save";
+
+// Le terrain chargé couvre au minimum CHUNK_RADIUS * CHUNK_SIZE unités dans chaque
+// direction. Le brouillard doit être totalement opaque avant cette limite, sinon
+// le bord du monde devient visible à l'horizon.
+const TERRAIN_REACH = CHUNK_RADIUS * CHUNK_SIZE;
+const FOG_FAR = TERRAIN_REACH - 2;
+const FOG_NEAR = FOG_FAR * 0.42;
+
+scene.fog = new THREE.Fog(FOG_COLOR, FOG_NEAR, FOG_FAR);
+
+const camera = new THREE.PerspectiveCamera(56, 1, 0.1, FOG_FAR + 60);
 
 const hemiLight = new THREE.HemisphereLight(0xf7fbff, 0x645c42, 2.15);
 scene.add(hemiLight);
@@ -53,20 +76,15 @@ const waterMaterial = new THREE.MeshLambertMaterial({
   depthWrite: true
 });
 
+// Le plan d'eau suit le joueur et doit dépasser la portée du brouillard,
+// sinon son bord apparaît à l'horizon.
 const water = new THREE.Mesh(
-  new THREE.PlaneGeometry(170, 170, 1, 1),
+  new THREE.PlaneGeometry((FOG_FAR + 30) * 2, (FOG_FAR + 30) * 2, 1, 1),
   waterMaterial
 );
 water.rotation.x = -Math.PI / 2;
 water.position.y = -2.65;
 scene.add(water);
-
-const CHUNK_SIZE = 24;
-const CHUNK_RADIUS = 2;
-const CHUNK_SEGMENTS = 9;
-const PLAYER_SPEED = 6.2;
-const RUN_MULTIPLIER = 1.8;
-const SAVE_KEY = "horizon-proto-0.2-save";
 
 let worldSeed = 0;
 let activeChunkKey = "";
@@ -75,15 +93,22 @@ let joystickPointer = null;
 let joystickVector = { x: 0, y: 0 };
 let cameraPointer = null;
 let cameraLastX = 0;
+let cameraLastY = 0;
 let cameraYaw = 0;
 let cameraPitch = 0.5;
 let walkTime = 0;
-let fpsTime = 0;
-let fpsFrames = 0;
-let adaptivePixelRatioDone = false;
+let idleTime = 0;
+
+const CAMERA_PITCH_MIN = 0.12;
+const CAMERA_PITCH_MAX = 0.98;
 
 const chunks = new Map();
 const discovered = new Set();
+const buildQueue = [];
+
+// Nombre de clés de chunks conservées dans la sauvegarde locale : borne la
+// taille du localStorage tout en gardant le compteur « découverts » utile.
+const MAX_SAVED_DISCOVERED = 1500;
 
 const BIOMES = [
   {
@@ -91,38 +116,48 @@ const BIOMES = [
     terrain: 0x74a45d,
     tree: 0x477444,
     density: 0.72,
-    dry: false
+    dry: false,
+    humidity: 0.5,
+    dryness: 0.5
   },
   {
     name: "Forêt douce",
     terrain: 0x628b50,
     tree: 0x345e3c,
     density: 0.92,
-    dry: false
+    dry: false,
+    humidity: 0.55,
+    dryness: -0.55
   },
   {
     name: "Plateau doré",
     terrain: 0xb09f68,
     tree: 0x6f7442,
-    density: 0.36,
-    dry: true
+    density: 0.55,
+    dry: true,
+    humidity: -0.55,
+    dryness: 0.55
   },
   {
     name: "Landes",
     terrain: 0x7f8f69,
     tree: 0x4f6848,
     density: 0.48,
-    dry: false
+    dry: false,
+    humidity: -0.5,
+    dryness: -0.5
   }
 ];
 
-const terrainMaterials = BIOMES.map(
-  (biome) =>
-    new THREE.MeshLambertMaterial({
-      color: biome.terrain,
-      flatShading: true
-    })
-);
+const biomeColors = BIOMES.map((biome) => new THREE.Color(biome.terrain));
+const biomeTreeColors = BIOMES.map((biome) => new THREE.Color(biome.tree));
+
+// Un seul matériau de terrain : la couleur de biome passe par les couleurs de
+// sommets, ce qui fond les biomes entre eux au lieu de les découper au chunk.
+const terrainMaterial = new THREE.MeshLambertMaterial({
+  vertexColors: true,
+  flatShading: true
+});
 
 const rockMaterial = new THREE.MeshLambertMaterial({
   color: 0x7d7b73,
@@ -134,17 +169,67 @@ const trunkMaterial = new THREE.MeshLambertMaterial({
   flatShading: true
 });
 
-const flowerMaterials = [
-  new THREE.MeshBasicMaterial({ color: 0xf2d07e }),
-  new THREE.MeshBasicMaterial({ color: 0xe8a3a1 }),
-  new THREE.MeshBasicMaterial({ color: 0xd7d0f0 })
+// Matériaux mutualisés : la teinte de feuillage et de fleur passe par la
+// couleur d'instance, pas par un matériau supplémentaire par objet.
+const crownMaterial = new THREE.MeshLambertMaterial({ flatShading: true });
+const flowerMaterial = new THREE.MeshLambertMaterial({ flatShading: true });
+
+/** Modulo toujours positif : les coordonnées de chunk peuvent être négatives. */
+function wrapIndex(value, length) {
+  return ((value % length) + length) % length;
+}
+
+const FLOWER_COLORS = [
+  new THREE.Color(0xf2d07e),
+  new THREE.Color(0xe8a3a1),
+  new THREE.Color(0xd7d0f0)
 ];
 
+/**
+ * Concatène des géométries non indexées partageant les mêmes attributs.
+ * Évite d'embarquer BufferGeometryUtils pour un seul usage.
+ */
+function mergeGeometries(geometries) {
+  const parts = geometries.map((g) => (g.index ? g.toNonIndexed() : g.clone()));
+  let total = 0;
+
+  for (const part of parts) total += part.attributes.position.count;
+
+  const position = new Float32Array(total * 3);
+  const normal = new Float32Array(total * 3);
+  let offset = 0;
+
+  for (const part of parts) {
+    position.set(part.attributes.position.array, offset * 3);
+    normal.set(part.attributes.normal.array, offset * 3);
+    offset += part.attributes.position.count;
+    part.dispose();
+  }
+
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute("position", new THREE.BufferAttribute(position, 3));
+  merged.setAttribute("normal", new THREE.BufferAttribute(normal, 3));
+  return merged;
+}
+
 const trunkGeometry = new THREE.CylinderGeometry(0.14, 0.23, 1.35, 5);
-const crownGeometry = new THREE.ConeGeometry(0.88, 1.8, 6);
-const crownSmallGeometry = new THREE.ConeGeometry(0.65, 1.4, 6);
+trunkGeometry.translate(0, 0.675, 0);
+
+// Les deux cônes du feuillage sont fusionnés : un arbre = 1 tronc + 1 houppier.
+const crownGeometry = (() => {
+  const lower = new THREE.ConeGeometry(0.88, 1.8, 6);
+  lower.translate(0, 1.72, 0);
+  const upper = new THREE.ConeGeometry(0.65, 1.4, 6);
+  upper.translate(0, 2.58, 0);
+
+  const merged = mergeGeometries([lower, upper]);
+  lower.dispose();
+  upper.dispose();
+  return merged;
+})();
+
 const rockGeometry = new THREE.DodecahedronGeometry(0.5, 0);
-const flowerGeometry = new THREE.SphereGeometry(0.075, 5, 4);
+const flowerGeometry = new THREE.SphereGeometry(0.11, 5, 4);
 
 const player = createPlayer();
 scene.add(player);
@@ -157,7 +242,7 @@ function createPlayer() {
   const blueDark = new THREE.MeshLambertMaterial({ color: 0x18354e, flatShading: true });
   const skin = new THREE.MeshLambertMaterial({ color: 0xd8aa83, flatShading: true });
   const hair = new THREE.MeshLambertMaterial({ color: 0x3d2d27, flatShading: true });
-  const bagMat = new THREE.MeshLambertMaterial({ color: 0x9a6b3d, flatShading: true });
+  const bagMat = new THREE.MeshLambertMaterial({ color: 0x8a5f36, flatShading: true });
 
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.38, 0.72, 4, 8), blue);
   body.position.y = 1.15;
@@ -187,12 +272,14 @@ function createPlayer() {
   rightArm.position.x = 0.48;
   rightArm.rotation.z = 0.15;
 
-  const bag = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.62, 0.24), bagMat);
-  bag.position.set(0, 1.17, 0.38);
-  bag.rotation.x = -0.08;
+  // L'avant du personnage est son +Z local (voir player.rotation.y plus bas) :
+  // le sac se porte donc en -Z, côté caméra quand on s'éloigne.
+  const bag = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.56, 0.26), bagMat);
+  bag.position.set(0, 1.19, -0.4);
+  bag.rotation.x = 0.08;
 
   group.add(body, head, hairCap, leftLeg, rightLeg, leftArm, rightArm, bag);
-  group.userData = { leftLeg, rightLeg, leftArm, rightArm };
+  group.userData = { body, head, hairCap, leftLeg, rightLeg, leftArm, rightArm, bag };
   return group;
 }
 
@@ -217,63 +304,102 @@ function terrainHeight(x, z) {
   const ridge =
     Math.sin((x + z) * 0.017 + sx * 2.7) * 1.45;
 
+  const hills =
+    Math.sin(x * 0.075 + sx * 4.3) *
+    Math.cos(z * 0.068 - sz * 3.1) * 1.3;
+
   const detail =
     Math.cos((x - z) * 0.055 - sz * 2.1) * 0.42;
 
-  return broad + ridge + detail;
+  return broad + ridge + hills + detail;
 }
 
-function biomeIndexForChunk(cx, cz) {
-  const n = random01(
-    Math.floor(cx / 2) * 17,
-    Math.floor(cz / 2) * 19,
-    81
-  );
-  return Math.min(BIOMES.length - 1, Math.floor(n * BIOMES.length));
+/**
+ * Champ de biome continu. Deux ondes lentes décorrélées donnent un couple
+ * (humidité, aridité) dont on déduit un poids par biome. Comme le champ dépend
+ * uniquement de la position monde, les biomes se fondent sans coupure aux
+ * frontières de chunk.
+ */
+const biomeWeights = new Float32Array(BIOMES.length);
+
+function computeBiomeWeights(x, z) {
+  const sx = worldSeed * 0.00013;
+  const sz = worldSeed * 0.00009;
+
+  const humidity =
+    Math.sin(x * 0.022 + sx * 3.1) * 0.5 +
+    Math.cos(z * 0.026 - sz * 2.3) * 0.5;
+
+  const dryness =
+    Math.cos((x + z * 0.6) * 0.019 + sx * 1.7) * 0.5 +
+    Math.sin((z - x * 0.4) * 0.025 - sz) * 0.5;
+
+  let total = 0;
+
+  for (let i = 0; i < BIOMES.length; i++) {
+    const dh = humidity - BIOMES[i].humidity;
+    const dd = dryness - BIOMES[i].dryness;
+    const weight = Math.exp(-(dh * dh + dd * dd) / 0.34);
+
+    biomeWeights[i] = weight;
+    total += weight;
+  }
+
+  if (total > 0) {
+    for (let i = 0; i < BIOMES.length; i++) biomeWeights[i] /= total;
+  } else {
+    biomeWeights.fill(1 / BIOMES.length);
+  }
+
+  return biomeWeights;
 }
 
-function makeTree(localX, localZ, worldY, scale, biomeIndex) {
-  const biome = BIOMES[biomeIndex];
-  const group = new THREE.Group();
+function dominantBiomeIndex(x, z) {
+  const weights = computeBiomeWeights(x, z);
+  let best = 0;
 
-  const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
-  trunk.position.y = 0.68 * scale;
-  trunk.scale.setScalar(scale);
+  for (let i = 1; i < BIOMES.length; i++) {
+    if (weights[i] > weights[best]) best = i;
+  }
 
-  const leafMaterial = new THREE.MeshLambertMaterial({
-    color: biome.tree,
-    flatShading: true
-  });
-
-  const crown1 = new THREE.Mesh(crownGeometry, leafMaterial);
-  crown1.position.y = 1.72 * scale;
-  crown1.scale.setScalar(scale);
-
-  const crown2 = new THREE.Mesh(crownSmallGeometry, leafMaterial);
-  crown2.position.y = 2.58 * scale;
-  crown2.scale.setScalar(scale * 0.93);
-
-  group.position.set(localX, worldY, localZ);
-  group.add(trunk, crown1, crown2);
-  group.userData.dynamicMaterial = leafMaterial;
-  return group;
+  return best;
 }
 
-function makeRock(localX, localZ, y, scale, rotationSeed) {
-  const rock = new THREE.Mesh(rockGeometry, rockMaterial);
-  rock.position.set(localX, y + 0.25 * scale, localZ);
-  rock.scale.set(scale, scale * (0.58 + rotationSeed * 0.2), scale * 0.9);
-  rock.rotation.set(rotationSeed * 0.7, rotationSeed * Math.PI * 1.8, 0);
-  return rock;
+const scratchColor = new THREE.Color();
+
+function blendedTerrainColor(x, z, target) {
+  const weights = computeBiomeWeights(x, z);
+
+  target.setRGB(0, 0, 0);
+
+  for (let i = 0; i < BIOMES.length; i++) {
+    scratchColor.copy(biomeColors[i]).multiplyScalar(weights[i]);
+    target.add(scratchColor);
+  }
+
+  return target;
 }
 
-function makeFlower(localX, localZ, y, materialIndex) {
-  const flower = new THREE.Mesh(
-    flowerGeometry,
-    flowerMaterials[materialIndex % flowerMaterials.length]
-  );
-  flower.position.set(localX, y + 0.12, localZ);
-  return flower;
+const dummy = new THREE.Object3D();
+
+function buildInstanced(geometry, material, items, applyTransform, colorOf) {
+  if (items.length === 0) return null;
+
+  const mesh = new THREE.InstancedMesh(geometry, material, items.length);
+  mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+
+  for (let i = 0; i < items.length; i++) {
+    applyTransform(dummy, items[i]);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+
+    if (colorOf) mesh.setColorAt(i, colorOf(items[i]));
+  }
+
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+
+  return mesh;
 }
 
 function createChunk(cx, cz) {
@@ -294,23 +420,38 @@ function createChunk(cx, cz) {
   geometry.rotateX(-Math.PI / 2);
 
   const positions = geometry.attributes.position;
+  const colors = new Float32Array(positions.count * 3);
+  const vertexColor = new THREE.Color();
 
   for (let i = 0; i < positions.count; i++) {
     const worldX = positions.getX(i) + centerX;
     const worldZ = positions.getZ(i) + centerZ;
+
     positions.setY(i, terrainHeight(worldX, worldZ));
+
+    blendedTerrainColor(worldX, worldZ, vertexColor);
+    colors[i * 3] = vertexColor.r;
+    colors[i * 3 + 1] = vertexColor.g;
+    colors[i * 3 + 2] = vertexColor.b;
   }
 
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geometry.computeVertexNormals();
 
-  const biomeIndex = biomeIndexForChunk(cx, cz);
-  const biome = BIOMES[biomeIndex];
-
-  const terrain = new THREE.Mesh(geometry, terrainMaterials[biomeIndex]);
+  const terrain = new THREE.Mesh(geometry, terrainMaterial);
+  terrain.userData.ownedGeometry = true;
   group.add(terrain);
 
+  const chunkBiome = BIOMES[dominantBiomeIndex(centerX, centerZ)];
+
+  // Densité rapportée à la surface du chunk pour rester visuellement stable.
   const propCount =
-    3 + Math.floor(random01(cx, cz, 12) * 5 * biome.density);
+    7 + Math.floor(random01(cx, cz, 12) * 16 * chunkBiome.density);
+
+  const trees = [];
+  const bushes = [];
+  const rocks = [];
+  const flowers = [];
 
   for (let i = 0; i < propCount; i++) {
     const localX =
@@ -327,39 +468,131 @@ function createChunk(cx, cz) {
 
     if (y < -2.3) continue;
 
+    const biomeIndex = dominantBiomeIndex(worldX, worldZ);
+    const biome = BIOMES[biomeIndex];
     const type = random01(cx * 41 + i, cz * 31 - i, 51);
 
     if (type < biome.density && !biome.dry) {
-      const scale =
-        0.66 + random01(cx + i * 7, cz - i * 11, 62) * 0.78;
-      group.add(makeTree(localX, localZ, y, scale, biomeIndex));
+      trees.push({
+        x: localX,
+        y,
+        z: localZ,
+        scale: 0.66 + random01(cx + i * 7, cz - i * 11, 62) * 0.78,
+        rotation: random01(cx - i * 3, cz + i * 9, 64) * Math.PI * 2,
+        biomeIndex
+      });
+    } else if (biome.dry && type < biome.density) {
+      // Les terres sèches n'ont pas d'arbres mais gardent un couvert bas :
+      // même géométrie de houppier, sans tronc et à petite échelle.
+      bushes.push({
+        x: localX,
+        y,
+        z: localZ,
+        scale: 0.34 + random01(cx + i * 7, cz - i * 11, 62) * 0.22,
+        rotation: random01(cx - i * 3, cz + i * 9, 64) * Math.PI * 2,
+        biomeIndex,
+        bushy: true
+      });
     } else {
-      const scale =
-        0.38 + random01(cx - i * 5, cz + i * 3, 72) * 0.82;
-      const rot = random01(i, cx + cz, 75);
-      group.add(makeRock(localX, localZ, y, scale, rot));
+      rocks.push({
+        x: localX,
+        y,
+        z: localZ,
+        scale: 0.38 + random01(cx - i * 5, cz + i * 3, 72) * 0.82,
+        seed: random01(i, cx + cz, 75)
+      });
     }
   }
 
-  if (!biome.dry) {
-    const flowerCount = Math.floor(random01(cx, cz, 101) * 5);
+  if (!chunkBiome.dry) {
+    const clusterCount = Math.floor(random01(cx, cz, 101) * 5);
 
-    for (let i = 0; i < flowerCount; i++) {
+    for (let i = 0; i < clusterCount; i++) {
       const localX =
-        (random01(cx * 131 + i, cz * 43, 103) - 0.5) *
-        (CHUNK_SIZE - 2);
+        (random01(cx * 131 + i, cz * 43, 103) - 0.5) * (CHUNK_SIZE - 2);
       const localZ =
-        (random01(cx * 79, cz * 149 - i, 105) - 0.5) *
-        (CHUNK_SIZE - 2);
+        (random01(cx * 79, cz * 149 - i, 105) - 0.5) * (CHUNK_SIZE - 2);
 
       const worldX = centerX + localX;
       const worldZ = centerZ + localZ;
-      const y = terrainHeight(worldX, worldZ);
 
-      if (y > -2.2) {
-        group.add(makeFlower(localX, localZ, y, i + cx + cz));
+      if (terrainHeight(worldX, worldZ) <= -2.2) continue;
+
+      // Petit bouquet : les fleurs isolées se lisaient comme des pixels perdus.
+      for (let p = 0; p < 3; p++) {
+        const offsetX = (random01(cx + i * 13, cz + p * 7, 107) - 0.5) * 1.1;
+        const offsetZ = (random01(cx + p * 11, cz + i * 5, 109) - 0.5) * 1.1;
+        const fx = localX + offsetX;
+        const fz = localZ + offsetZ;
+        const fy = terrainHeight(centerX + fx, centerZ + fz);
+
+        if (fy <= -2.2) continue;
+
+        flowers.push({
+          x: fx,
+          y: fy,
+          z: fz,
+          colorIndex: wrapIndex(i + p + cx + cz, FLOWER_COLORS.length)
+        });
       }
     }
+  }
+
+  const trunkMesh = buildInstanced(
+    trunkGeometry,
+    trunkMaterial,
+    trees,
+    (obj, tree) => {
+      obj.position.set(tree.x, tree.y, tree.z);
+      obj.rotation.set(0, tree.rotation, 0);
+      obj.scale.setScalar(tree.scale);
+    }
+  );
+
+  // Arbres et buissons partagent la géométrie de houppier : un seul appel de rendu.
+  const crownMesh = buildInstanced(
+    crownGeometry,
+    crownMaterial,
+    [...trees, ...bushes],
+    (obj, item) => {
+      const sink = item.bushy ? 0.82 * item.scale : 0;
+
+      obj.position.set(item.x, item.y - sink, item.z);
+      obj.rotation.set(0, item.rotation, 0);
+      obj.scale.setScalar(item.scale);
+    },
+    (item) => biomeTreeColors[item.biomeIndex]
+  );
+
+  const rockMesh = buildInstanced(
+    rockGeometry,
+    rockMaterial,
+    rocks,
+    (obj, rock) => {
+      obj.position.set(rock.x, rock.y + 0.25 * rock.scale, rock.z);
+      obj.rotation.set(rock.seed * 0.7, rock.seed * Math.PI * 1.8, 0);
+      obj.scale.set(
+        rock.scale,
+        rock.scale * (0.58 + rock.seed * 0.2),
+        rock.scale * 0.9
+      );
+    }
+  );
+
+  const flowerMesh = buildInstanced(
+    flowerGeometry,
+    flowerMaterial,
+    flowers,
+    (obj, flower) => {
+      obj.position.set(flower.x, flower.y + 0.14, flower.z);
+      obj.rotation.set(0, 0, 0);
+      obj.scale.setScalar(1);
+    },
+    (flower) => FLOWER_COLORS[flower.colorIndex]
+  );
+
+  for (const mesh of [trunkMesh, crownMesh, rockMesh, flowerMesh]) {
+    if (mesh) group.add(mesh);
   }
 
   scene.add(group);
@@ -371,20 +604,14 @@ function disposeChunk(group) {
   scene.remove(group);
 
   group.traverse((object) => {
-    if (
-      object.geometry &&
-      object.geometry !== trunkGeometry &&
-      object.geometry !== crownGeometry &&
-      object.geometry !== crownSmallGeometry &&
-      object.geometry !== rockGeometry &&
-      object.geometry !== flowerGeometry
-    ) {
+    // Seules les géométries propres au chunk sont libérées : les géométries
+    // d'arbres, rochers et fleurs sont mutualisées entre tous les chunks.
+    if (object.userData?.ownedGeometry && object.geometry) {
       object.geometry.dispose();
     }
 
-    if (object.userData?.dynamicMaterial) {
-      object.userData.dynamicMaterial.dispose();
-    }
+    // Libère les tampons d'instances (matrices et couleurs).
+    if (object.isInstancedMesh) object.dispose();
   });
 }
 
@@ -396,11 +623,24 @@ function refreshChunks(force = false) {
   if (!force && key === activeChunkKey) return;
   activeChunkKey = key;
 
+  buildQueue.length = 0;
+
   for (let dz = -CHUNK_RADIUS; dz <= CHUNK_RADIUS; dz++) {
     for (let dx = -CHUNK_RADIUS; dx <= CHUNK_RADIUS; dx++) {
-      createChunk(cx + dx, cz + dz);
+      const nx = cx + dx;
+      const nz = cz + dz;
+
+      if (chunks.has(`${nx},${nz}`)) continue;
+
+      // Les chunks proches sont construits en premier.
+      buildQueue.push({ cx: nx, cz: nz, priority: dx * dx + dz * dz });
     }
   }
+
+  buildQueue.sort((a, b) => a.priority - b.priority);
+
+  // Au démarrage ou après un changement de monde, tout est bâti immédiatement.
+  if (force) flushBuildQueue();
 
   for (const [chunkKey, group] of [...chunks.entries()]) {
     const [chunkX, chunkZ] = chunkKey.split(",").map(Number);
@@ -415,6 +655,29 @@ function refreshChunks(force = false) {
   }
 }
 
+/**
+ * Construit au plus `budget` chunks par image : franchir une frontière demande
+ * jusqu'à 5 chunks, les bâtir d'un coup provoquait un à-coup visible.
+ */
+function processBuildQueue(budget = 1) {
+  let built = 0;
+
+  while (buildQueue.length > 0 && built < budget) {
+    const next = buildQueue.shift();
+    createChunk(next.cx, next.cz);
+    built++;
+  }
+
+  return built;
+}
+
+function flushBuildQueue() {
+  while (buildQueue.length > 0) {
+    const next = buildQueue.shift();
+    createChunk(next.cx, next.cz);
+  }
+}
+
 function clearWorld() {
   for (const group of chunks.values()) {
     disposeChunk(group);
@@ -422,12 +685,11 @@ function clearWorld() {
 
   chunks.clear();
   discovered.clear();
+  buildQueue.length = 0;
 }
 
 function currentBiome() {
-  const cx = Math.floor(player.position.x / CHUNK_SIZE);
-  const cz = Math.floor(player.position.z / CHUNK_SIZE);
-  return BIOMES[biomeIndexForChunk(cx, cz)];
+  return BIOMES[dominantBiomeIndex(player.position.x, player.position.z)];
 }
 
 function saveGame() {
@@ -435,7 +697,9 @@ function saveGame() {
     seed: worldSeed,
     x: Number(player.position.x.toFixed(3)),
     z: Number(player.position.z.toFixed(3)),
-    yaw: Number(cameraYaw.toFixed(3))
+    yaw: Number(cameraYaw.toFixed(3)),
+    pitch: Number(cameraPitch.toFixed(3)),
+    discovered: [...discovered].slice(-MAX_SAVED_DISCOVERED)
   };
 
   try {
@@ -464,10 +728,24 @@ function loadGame() {
     player.position.x = data.x;
     player.position.z = data.z;
     cameraYaw = Number.isFinite(data.yaw) ? data.yaw : 0;
+    cameraPitch = Number.isFinite(data.pitch)
+      ? clampPitch(data.pitch)
+      : 0.5;
+
+    if (Array.isArray(data.discovered)) {
+      for (const key of data.discovered) {
+        if (typeof key === "string") discovered.add(key);
+      }
+    }
+
     return true;
   } catch {
     return false;
   }
+}
+
+function clampPitch(value) {
+  return Math.min(CAMERA_PITCH_MAX, Math.max(CAMERA_PITCH_MIN, value));
 }
 
 function startNewWorld() {
@@ -476,12 +754,14 @@ function startNewWorld() {
   worldSeed = Math.floor(100000 + Math.random() * 899999);
   activeChunkKey = "";
   cameraYaw = 0;
+  cameraPitch = 0.5;
 
   player.position.set(1.5, 0, 1.5);
   player.position.y = terrainHeight(player.position.x, player.position.z);
 
   refreshChunks(true);
-  updateHud();
+  snapCamera();
+  updateHud(true);
   saveGame();
 }
 
@@ -496,19 +776,31 @@ function resumeOrCreateWorld() {
   activeChunkKey = "";
   player.position.y = terrainHeight(player.position.x, player.position.z);
   refreshChunks(true);
-  updateHud();
+  snapCamera();
+  updateHud(true);
 }
 
-function updateHud() {
-  const biome = currentBiome();
+// Le HUD n'est réécrit que lorsqu'une valeur change réellement.
+const hudCache = {};
 
-  biomeEl.textContent = biome.name;
-  coordsEl.textContent =
-    `X ${player.position.x.toFixed(1)} · Z ${player.position.z.toFixed(1)}`;
+function setHudText(element, key, value) {
+  if (hudCache[key] === value) return;
+  hudCache[key] = value;
+  element.textContent = value;
+}
 
-  chunksEl.textContent = `${chunks.size} chunks actifs`;
-  discoveredEl.textContent = `${discovered.size} découverts`;
-  seedEl.textContent = `Seed ${worldSeed}`;
+function updateHud(force = false) {
+  if (force) for (const key of Object.keys(hudCache)) delete hudCache[key];
+
+  setHudText(biomeEl, "biome", currentBiome().name);
+  setHudText(
+    coordsEl,
+    "coords",
+    `X ${player.position.x.toFixed(1)} · Z ${player.position.z.toFixed(1)}`
+  );
+  setHudText(chunksEl, "chunks", `${chunks.size} chunks actifs`);
+  setHudText(discoveredEl, "discovered", `${discovered.size} découverts`);
+  setHudText(seedEl, "seed", `Seed ${worldSeed}`);
 }
 
 function updateJoystick(clientX, clientY) {
@@ -543,14 +835,25 @@ function releaseJoystick(event) {
   stick.style.transform = "translate(0, 0)";
 }
 
+/** setPointerCapture lève si le pointeur n'est plus actif : jamais bloquant. */
+function capturePointer(element, pointerId) {
+  try {
+    element.setPointerCapture?.(pointerId);
+  } catch {
+    // Le pointeur a déjà été relâché, la capture n'est qu'un confort.
+  }
+}
+
 joystick.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
   joystickPointer = event.pointerId;
-  joystick.setPointerCapture?.(event.pointerId);
+  capturePointer(joystick, event.pointerId);
   updateJoystick(event.clientX, event.clientY);
 });
 
 joystick.addEventListener("pointermove", (event) => {
   if (event.pointerId !== joystickPointer) return;
+  event.preventDefault();
   updateJoystick(event.clientX, event.clientY);
 });
 
@@ -559,19 +862,26 @@ joystick.addEventListener("pointercancel", releaseJoystick);
 joystick.addEventListener("lostpointercapture", releaseJoystick);
 
 canvas.addEventListener("pointerdown", (event) => {
+  if (cameraPointer !== null) return;
   if (event.clientX < window.innerWidth * 0.42) return;
 
   cameraPointer = event.pointerId;
   cameraLastX = event.clientX;
-  canvas.setPointerCapture?.(event.pointerId);
+  cameraLastY = event.clientY;
+  capturePointer(canvas, event.pointerId);
 });
 
 canvas.addEventListener("pointermove", (event) => {
   if (event.pointerId !== cameraPointer) return;
 
   const dx = event.clientX - cameraLastX;
+  const dy = event.clientY - cameraLastY;
+
   cameraLastX = event.clientX;
+  cameraLastY = event.clientY;
+
   cameraYaw -= dx * 0.0085;
+  cameraPitch = clampPitch(cameraPitch + dy * 0.005);
 });
 
 const releaseCamera = (event) => {
@@ -582,11 +892,10 @@ const releaseCamera = (event) => {
 
 canvas.addEventListener("pointerup", releaseCamera);
 canvas.addEventListener("pointercancel", releaseCamera);
-canvas.addEventListener("lostpointercapture", () => {
-  cameraPointer = null;
-});
+canvas.addEventListener("lostpointercapture", releaseCamera);
 
-runButton.addEventListener("pointerdown", () => {
+runButton.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
   running = true;
   runButton.classList.add("active");
 });
@@ -603,7 +912,9 @@ runButton.addEventListener("pointerleave", stopRunning);
 newWorldButton.addEventListener("click", () => {
   try {
     localStorage.removeItem(SAVE_KEY);
-  } catch {}
+  } catch {
+    // Rien à faire : on repart quand même sur un nouveau monde.
+  }
   startNewWorld();
 });
 
@@ -613,6 +924,13 @@ window.addEventListener("keydown", (event) => {
 
 window.addEventListener("keyup", (event) => {
   keys.delete(event.key.toLowerCase());
+});
+
+// Le clavier reste actif si l'onglet perd le focus : on relâche tout.
+window.addEventListener("blur", () => {
+  keys.clear();
+  releaseJoystick();
+  stopRunning();
 });
 
 window.addEventListener("pagehide", saveGame);
@@ -640,16 +958,23 @@ function keyboardMovement() {
 }
 
 function animatePlayer(moving, sprinting, delta) {
-  const { leftLeg, rightLeg, leftArm, rightArm } = player.userData;
+  const { body, head, leftLeg, rightLeg, leftArm, rightArm } = player.userData;
 
   if (moving) {
+    idleTime = 0;
     walkTime += delta * (sprinting ? 12 : 8);
+
     const swing = Math.sin(walkTime) * (sprinting ? 0.62 : 0.42);
 
     leftLeg.rotation.x = swing;
     rightLeg.rotation.x = -swing;
     leftArm.rotation.x = -swing * 0.78;
     rightArm.rotation.x = swing * 0.78;
+
+    // Buste légèrement penché en avant à la course.
+    body.rotation.x = sprinting ? 0.16 : 0.06;
+    body.position.y = 1.15;
+    head.position.y = 1.95;
 
     player.position.y += Math.abs(Math.sin(walkTime * 2)) * 0.025;
   } else {
@@ -659,8 +984,45 @@ function animatePlayer(moving, sprinting, delta) {
     rightLeg.rotation.x *= 1 - settle;
     leftArm.rotation.x *= 1 - settle;
     rightArm.rotation.x *= 1 - settle;
+    body.rotation.x *= 1 - settle;
+
+    // Respiration : le personnage ne se fige pas complètement à l'arrêt.
+    idleTime += delta;
+    const breath = Math.sin(idleTime * 1.7) * 0.012;
+
+    body.position.y = 1.15 + breath;
+    head.position.y = 1.95 + breath * 1.6;
   }
 }
+
+function snapCamera() {
+  const horizontal = Math.cos(cameraPitch) * CAMERA_DISTANCE;
+  const vertical = Math.sin(cameraPitch) * CAMERA_DISTANCE;
+
+  camera.position.set(
+    player.position.x - Math.sin(cameraYaw) * horizontal,
+    player.position.y + vertical + 1.4,
+    player.position.z + Math.cos(cameraYaw) * horizontal
+  );
+
+  camera.lookAt(
+    player.position.x,
+    player.position.y + 1.25,
+    player.position.z
+  );
+}
+
+function applyPixelRatio() {
+  const target = Math.min(
+    window.devicePixelRatio || 1,
+    PIXEL_RATIO_STEPS[pixelStep]
+  );
+
+  renderer.setPixelRatio(target);
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+}
+
+let resizeTimer = 0;
 
 function resize() {
   const width = window.innerWidth;
@@ -671,19 +1033,70 @@ function resize() {
   camera.updateProjectionMatrix();
 }
 
-window.addEventListener("resize", resize);
-resize();
+// Sur mobile, l'apparition/disparition de la barre d'URL déclenche des resize
+// en rafale : on les regroupe.
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(resize, 120);
+});
 
+window.addEventListener("orientationchange", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(resize, 220);
+});
+
+resize();
 resumeOrCreateWorld();
 
-const clock = new THREE.Clock();
+let lastTime = performance.now();
 let hudTimer = 0;
 let saveTimer = 0;
+let firstFrameDone = false;
+
+// Mesure glissante des FPS pour l'adaptation de résolution.
+let fpsWindowTime = 0;
+let fpsWindowFrames = 0;
+let goodWindows = 0;
+
+function updateAdaptiveResolution(delta) {
+  fpsWindowTime += delta;
+  fpsWindowFrames++;
+
+  if (fpsWindowTime < 2.5) return;
+
+  const fps = fpsWindowFrames / fpsWindowTime;
+
+  fpsWindowTime = 0;
+  fpsWindowFrames = 0;
+
+  if (fps < 38 && pixelStep < PIXEL_RATIO_STEPS.length - 1) {
+    pixelStep++;
+    goodWindows = 0;
+    applyPixelRatio();
+    return;
+  }
+
+  // On ne remonte qu'après deux fenêtres confortables, pour éviter l'oscillation.
+  if (fps > 57 && pixelStep > 0) {
+    goodWindows++;
+
+    if (goodWindows >= 2) {
+      pixelStep--;
+      goodWindows = 0;
+      applyPixelRatio();
+    }
+  } else {
+    goodWindows = 0;
+  }
+}
 
 function animate() {
   requestAnimationFrame(animate);
 
-  const delta = Math.min(clock.getDelta(), 0.04);
+  const now = performance.now();
+  const delta = Math.min((now - lastTime) / 1000, 0.04);
+  lastTime = now;
+
   const keyboard = keyboardMovement();
 
   let localX = joystickVector.x + keyboard.x;
@@ -714,34 +1127,30 @@ function animate() {
 
     player.rotation.y = Math.atan2(moveX, moveZ);
 
-    const ground = terrainHeight(player.position.x, player.position.z);
-    player.position.y = Math.max(ground, -2.45);
-
     refreshChunks();
-  } else {
-    const ground = terrainHeight(player.position.x, player.position.z);
-    player.position.y = Math.max(ground, -2.45);
   }
+
+  const ground = terrainHeight(player.position.x, player.position.z);
+  player.position.y = Math.max(ground, -2.45);
 
   animatePlayer(moving, sprinting, delta);
 
-  water.position.x = Math.round(player.position.x / 20) * 20;
-  water.position.z = Math.round(player.position.z / 20) * 20;
+  // Étalement de la génération sur plusieurs images.
+  processBuildQueue(2);
 
-  const distance = 11.8;
-  const cameraX = player.position.x - Math.sin(cameraYaw) * distance;
-  const cameraZ = player.position.z + Math.cos(cameraYaw) * distance;
+  water.position.x = player.position.x;
+  water.position.z = player.position.z;
+
+  const horizontal = Math.cos(cameraPitch) * CAMERA_DISTANCE;
+  const vertical = Math.sin(cameraPitch) * CAMERA_DISTANCE;
 
   const desiredCamera = new THREE.Vector3(
-    cameraX,
-    player.position.y + 6.8 + cameraPitch,
-    cameraZ
+    player.position.x - Math.sin(cameraYaw) * horizontal,
+    player.position.y + vertical + 1.4,
+    player.position.z + Math.cos(cameraYaw) * horizontal
   );
 
-  camera.position.lerp(
-    desiredCamera,
-    1 - Math.pow(0.002, delta)
-  );
+  camera.position.lerp(desiredCamera, 1 - Math.pow(0.002, delta));
 
   camera.lookAt(
     player.position.x,
@@ -765,22 +1174,58 @@ function animate() {
     saveTimer = 0;
   }
 
-  fpsTime += delta;
-  fpsFrames++;
-
-  if (!adaptivePixelRatioDone && fpsTime > 4) {
-    const fps = fpsFrames / fpsTime;
-
-    if (fps < 37) {
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.0));
-      renderer.setSize(window.innerWidth, window.innerHeight, false);
-    }
-
-    adaptivePixelRatioDone = true;
-  }
+  updateAdaptiveResolution(delta);
 
   renderer.render(scene, camera);
+
+  if (!firstFrameDone) {
+    firstFrameDone = true;
+    document.body.classList.add("ready");
+    // Laisse le fondu se jouer avant de retirer l'écran de chargement.
+    setTimeout(() => loading?.remove(), 700);
+  }
 }
 
-loading.remove();
 animate();
+
+// Sonde de diagnostic, utilisée par les tests automatisés.
+window.HORIZON = {
+  get chunks() { return chunks.size; },
+  get discovered() { return discovered.size; },
+  get seed() { return worldSeed; },
+  get pos() { return { x: player.position.x, y: player.position.y, z: player.position.z }; },
+  get yaw() { return cameraYaw; },
+  get pitch() { return cameraPitch; },
+  get pixelRatio() { return renderer.getPixelRatio(); },
+  get biome() { return currentBiome().name; },
+  get queued() { return buildQueue.length; },
+  get info() {
+    return {
+      calls: renderer.info.render.calls,
+      tris: renderer.info.render.triangles,
+      geometries: renderer.info.memory.geometries,
+      textures: renderer.info.memory.textures,
+      programs: renderer.info.programs?.length ?? -1
+    };
+  },
+  get objectsInScene() { let n = 0; scene.traverse(() => n++); return n; },
+  get instances() {
+    const tally = { trunks: 0, crowns: 0, rocks: 0, flowers: 0 };
+
+    for (const group of chunks.values()) {
+      for (const child of group.children) {
+        if (!child.isInstancedMesh) continue;
+        if (child.geometry === trunkGeometry) tally.trunks += child.count;
+        else if (child.geometry === crownGeometry) tally.crowns += child.count;
+        else if (child.geometry === rockGeometry) tally.rocks += child.count;
+        else if (child.geometry === flowerGeometry) tally.flowers += child.count;
+      }
+    }
+
+    return tally;
+  },
+  get camPos() { return { x: camera.position.x, y: camera.position.y, z: camera.position.z }; },
+  move(dx, dy) { joystickVector.x = dx; joystickVector.y = dy; },
+  setRun(value) { running = value; },
+  setYaw(value) { cameraYaw = value; }
+};

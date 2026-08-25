@@ -2,11 +2,14 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no" />
   <meta name="theme-color" content="#8bc6df" />
+  <meta name="description" content="Horizon Proto 0.2 — petit monde 3D procédural jouable au doigt, généré par chunks autour du joueur." />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Horizon Proto 0.2</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%238bc6df'/%3E%3Ccircle cx='44' cy='19' r='8' fill='%23ffe9ac'/%3E%3Cpath d='M0 44 L18 30 L34 44 L48 34 L64 45 L64 64 L0 64 Z' fill='%2374a45d'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
@@ -42,10 +45,41 @@
     <div id="loading">
       <div class="loading-mark">◌</div>
       <strong>HORIZON</strong>
-      <span>Le monde prend forme…</span>
+      <span id="loading-message">Le monde prend forme…</span>
     </div>
   </main>
 
   <script type="module" src="./main.mjs"></script>
+
+  <script>
+    // Filet de sécurité : si le module ne démarre pas (WebGL indisponible,
+    // script bloqué), l'écran de chargement doit dire pourquoi au lieu de
+    // tourner indéfiniment.
+    (function () {
+      var message = document.getElementById("loading-message");
+      var failed = false;
+
+      function fail(text) {
+        if (failed || document.body.classList.contains("ready")) return;
+        failed = true;
+        if (message) message.textContent = text;
+        document.body.classList.add("failed");
+      }
+
+      window.addEventListener("error", function (event) {
+        if (event.target && event.target.tagName === "SCRIPT") {
+          fail("Le moteur 3D n'a pas pu être chargé.");
+        } else if (event.message) {
+          fail("Erreur au démarrage : " + event.message);
+        }
+      }, true);
+
+      setTimeout(function () {
+        if (!window.HORIZON) {
+          fail("Démarrage impossible : WebGL est peut-être désactivé.");
+        }
+      }, 12000);
+    })();
+  </script>
 </body>
 </html>

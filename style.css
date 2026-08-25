@@ -23,6 +23,7 @@ button {
 
 #game {
   position: relative;
+  touch-action: none;
   width: 100vw;
   height: 100dvh;
   overflow: hidden;
@@ -33,6 +34,7 @@ button {
   display: block;
   width: 100%;
   height: 100%;
+  touch-action: none;
 }
 
 #hud {
@@ -174,6 +176,9 @@ button {
 
 #actions button {
   min-height: 50px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
   border: 1px solid rgba(255,255,255,.28);
   color: white;
   background: rgba(18, 30, 37, .38);
@@ -213,6 +218,7 @@ button {
   position: absolute;
   inset: 0;
   z-index: 20;
+  transition: opacity .55s ease;
   display: grid;
   place-content: center;
   gap: 5px;
@@ -239,6 +245,23 @@ button {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+body.ready #loading {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Le monde n'a pas démarré : on fige l'indicateur et on laisse lire le message. */
+body.failed #loading .loading-mark {
+  animation: none;
+  opacity: .45;
+}
+
+body.failed #loading span {
+  opacity: 1;
+  max-width: 78vw;
+  line-height: 1.5;
 }
 
 @media (max-width: 430px) {
