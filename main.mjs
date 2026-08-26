@@ -204,7 +204,11 @@ const trunkMaterial = new THREE.MeshLambertMaterial({ color: 0x765336 });
 // Matériaux mutualisés : la teinte de feuillage et de fleur passe par la
 // couleur d'instance, pas par un matériau supplémentaire par objet.
 const crownMaterial = new THREE.MeshLambertMaterial();
-const flowerMaterial = new THREE.MeshLambertMaterial();
+
+// Les fleurs sont fusionnées par chunk en une seule géométrie : la teinte
+// passe donc par les couleurs de sommets, comme pour le terrain.
+const flowerMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
+const flowerInstancedMaterial = new THREE.MeshLambertMaterial();
 
 /** Modulo toujours positif : les coordonnées de chunk peuvent être négatives. */
 function wrapIndex(value, length) {
@@ -225,12 +229,12 @@ const FLOWER_MATERIALS = FLOWER_COLORS.map(
 
 // Chaque variante ne change qu'UNE propriété par rapport à la variante 0,
 // pour que le test sur appareil désigne une cause et non un faisceau.
+// La variante 0 est celle du jeu. Les deux autres restent accessibles en mode
+// diagnostic pour rejouer la comparaison qui a désigné la cause.
 const FLOWER_VARIANTS = [
-  "0 actuel : sphere + couleur d'instance",
-  "1 sans couleur d'instance",
-  "2 geometrie tetraedre",
-  "3 sans instanciation",
-  "4 taille x3"
+  "0 fusionnees (defaut)",
+  "1 instanciees (ancien, defaillant)",
+  "2 un objet par fleur"
 ];
 
 let flowerVariant = 0;
@@ -313,8 +317,6 @@ const crownGeometry = (() => {
 const rockGeometry = faceted(new THREE.DodecahedronGeometry(0.5, 0));
 const flowerGeometry = faceted(new THREE.SphereGeometry(0.11, 5, 4));
 
-// Sans pôles ni triangles minuscules, contrairement à la sphère.
-const flowerTetraGeometry = faceted(new THREE.TetrahedronGeometry(0.14, 0));
 
 const player = createPlayer();
 scene.add(player);
@@ -690,60 +692,95 @@ function createChunk(cx, cz) {
 }
 
 /**
- * Construit les fleurs selon la variante de diagnostic active.
- * En variante 0 (celle du jeu), un seul InstancedMesh coloré par instance.
+ * Fusionne toutes les fleurs d'un chunk en une seule géométrie : les sommets
+ * sont écrits à leur position finale et la teinte passe par les couleurs de
+ * sommets. Un appel de rendu par chunk, et surtout aucune instanciation.
+ *
+ * L'InstancedMesh des fleurs corrompait le rendu sur certains GPU mobiles
+ * (grands polygones noirs clignotants), ce qu'aucune de ses propriétés prise
+ * isolément n'expliquait : ni la couleur d'instance, ni la géométrie, ni la
+ * taille. Seule la suppression de l'instanciation y mettait fin. Les troncs,
+ * houppiers et rochers restent instanciés — eux n'ont jamais posé problème.
  */
+function buildFlowerPatch(flowers) {
+  const source = flowerGeometry.attributes.position;
+  const sourceNormal = flowerGeometry.attributes.normal;
+  const perFlower = source.count;
+  const total = perFlower * flowers.length;
+
+  const position = new Float32Array(total * 3);
+  const normal = new Float32Array(total * 3);
+  const color = new Float32Array(total * 3);
+
+  let out = 0;
+
+  for (const flower of flowers) {
+    const tint = FLOWER_COLORS[flower.colorIndex];
+
+    for (let i = 0; i < perFlower; i++) {
+      position[out * 3] = source.getX(i) + flower.x;
+      position[out * 3 + 1] = source.getY(i) + flower.y + 0.14;
+      position[out * 3 + 2] = source.getZ(i) + flower.z;
+
+      normal[out * 3] = sourceNormal.getX(i);
+      normal[out * 3 + 1] = sourceNormal.getY(i);
+      normal[out * 3 + 2] = sourceNormal.getZ(i);
+
+      color[out * 3] = tint.r;
+      color[out * 3 + 1] = tint.g;
+      color[out * 3 + 2] = tint.b;
+
+      out++;
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(position, 3));
+  geometry.setAttribute("normal", new THREE.BufferAttribute(normal, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(color, 3));
+  return geometry;
+}
+
 function addFlowers(group, flowers) {
   if (flowers.length === 0) return;
 
-  const scale = flowerVariant === 4 ? 3 : 1;
-  const geometry = flowerVariant === 2 ? flowerTetraGeometry : flowerGeometry;
-
-  const place = (obj, flower) => {
-    obj.position.set(flower.x, flower.y + 0.14, flower.z);
-    obj.rotation.set(0, 0, 0);
-    obj.scale.setScalar(scale);
-  };
-
-  // Variante 3 : un Mesh ordinaire par fleur, aucune instanciation.
-  if (flowerVariant === 3) {
+  // Variante 2 : un objet ordinaire par fleur (coûteux, gardé pour référence).
+  if (flowerVariant === 2) {
     for (const flower of flowers) {
-      const mesh = new THREE.Mesh(geometry, FLOWER_MATERIALS[flower.colorIndex]);
+      const mesh = new THREE.Mesh(flowerGeometry, FLOWER_MATERIALS[flower.colorIndex]);
       mesh.position.set(flower.x, flower.y + 0.14, flower.z);
-      mesh.scale.setScalar(scale);
       mesh.userData.kind = "fleurs";
       group.add(mesh);
     }
     return;
   }
 
-  // Variante 1 : un InstancedMesh par teinte, sans couleur d'instance.
+  // Variante 1 : l'ancien rendu instancié, celui qui se corrompt.
   if (flowerVariant === 1) {
-    for (let index = 0; index < FLOWER_MATERIALS.length; index++) {
-      const subset = flowers.filter((flower) => flower.colorIndex === index);
-      const mesh = buildInstanced(geometry, FLOWER_MATERIALS[index], subset, place);
+    const mesh = buildInstanced(
+      flowerGeometry,
+      flowerInstancedMaterial,
+      flowers,
+      (obj, flower) => {
+        obj.position.set(flower.x, flower.y + 0.14, flower.z);
+        obj.rotation.set(0, 0, 0);
+        obj.scale.setScalar(1);
+      },
+      (flower) => FLOWER_COLORS[flower.colorIndex]
+    );
 
-      if (mesh) {
-        mesh.userData.kind = "fleurs";
-        group.add(mesh);
-      }
+    if (mesh) {
+      mesh.userData.kind = "fleurs";
+      group.add(mesh);
     }
     return;
   }
 
-  // Variantes 0, 2 et 4 : couleur d'instance conservée.
-  const mesh = buildInstanced(
-    geometry,
-    flowerMaterial,
-    flowers,
-    place,
-    (flower) => FLOWER_COLORS[flower.colorIndex]
-  );
-
-  if (mesh) {
-    mesh.userData.kind = "fleurs";
-    group.add(mesh);
-  }
+  // Variante 0, celle du jeu : une seule géométrie fusionnée par chunk.
+  const patch = new THREE.Mesh(buildFlowerPatch(flowers), flowerMaterial);
+  patch.userData.kind = "fleurs";
+  patch.userData.ownedGeometry = true;   // propre au chunk : à libérer avec lui
+  group.add(patch);
 }
 
 function disposeChunk(group) {
@@ -1502,6 +1539,36 @@ window.HORIZON = {
           };
     return null;
   },
+  get flowerPatchProbe() {
+    for (const group of chunks.values())
+      for (const child of group.children)
+        if (child.userData.kind === "fleurs") {
+          const col = child.geometry.attributes.color;
+          const teintes = new Set();
+          for (let i = 0; i < col.count; i += 90)
+            teintes.add([col.getX(i), col.getY(i), col.getZ(i)].map(v => v.toFixed(3)).join(","));
+          return { instancie: !!child.isInstancedMesh,
+                   attributs: Object.keys(child.geometry.attributes).join("+"),
+                   sommets: col.count, fleurs: col.count / 90,
+                   teintesDistinctes: [...teintes] };
+        }
+    return null;
+  },
+  get nearestFlower() {
+    let best = null;
+    for (const group of chunks.values())
+      for (const child of group.children) {
+        if (child.userData.kind !== "fleurs") continue;
+        const pos = child.geometry.attributes.position;
+        for (let i = 0; i < pos.count; i += 90) {
+          const x = pos.getX(i) + group.position.x;
+          const z = pos.getZ(i) + group.position.z;
+          const d = Math.hypot(x - player.position.x, z - player.position.z);
+          if (!best || d < best.dist) best = { x, z, dist: d };
+        }
+      }
+    return best;
+  },
   get kindVisibility() {
     const tally = {};
     for (const group of chunks.values()) {
@@ -1568,6 +1635,63 @@ window.HORIZON = {
     updateHud(true);
     return { seed: worldSeed, pos: window.HORIZON.pos };
   },
+  /**
+   * Normales de longueur nulle et triangles d'aire nulle.
+   * Vector3.normalize() divise par `length() || 1` : une normale dégénérée
+   * ressort à (0,0,0), finie, donc invisible pour un scan de NaN. Dans le
+   * shader, normalize(vec3(0)) vaut NaN et l'éclairement s'effondre.
+   */
+  scanDegenerate() {
+    const report = [];
+    const named = new Map([
+      [trunkGeometry, "tronc"], [crownGeometry, "houppier"],
+      [rockGeometry, "rocher"], [flowerGeometry, "fleur"]
+    ]);
+
+    const inspect = (geometry, label) => {
+      const normal = geometry.attributes.normal;
+      const position = geometry.attributes.position;
+      let zeroNormals = 0;
+      let minLen = Infinity;
+
+      for (let i = 0; i < normal.count; i++) {
+        const len = Math.hypot(normal.getX(i), normal.getY(i), normal.getZ(i));
+        minLen = Math.min(minLen, len);
+        if (len < 1e-6) zeroNormals++;
+      }
+
+      let degenerate = 0;
+      let minArea = Infinity;
+
+      for (let t = 0; t + 2 < position.count; t += 3) {
+        const ax = position.getX(t), ay = position.getY(t), az = position.getZ(t);
+        const bx = position.getX(t+1), by = position.getY(t+1), bz = position.getZ(t+1);
+        const cx2 = position.getX(t+2), cy = position.getY(t+2), cz2 = position.getZ(t+2);
+        const ux = bx-ax, uy = by-ay, uz = bz-az;
+        const vx = cx2-ax, vy = cy-ay, vz = cz2-az;
+        const nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+        const area = Math.hypot(nx, ny, nz) / 2;
+        minArea = Math.min(minArea, area);
+        if (area < 1e-12) degenerate++;
+      }
+
+      report.push({ label, sommets: position.count,
+                    normalesNulles: zeroNormals, longueurMin: +minLen.toFixed(8),
+                    trianglesDegeneres: degenerate, aireMin: minArea.toExponential(3) });
+    };
+
+    for (const [geometry, label] of named) inspect(geometry, label);
+
+    for (const group of chunks.values()) {
+      for (const child of group.children) {
+        if (child.userData.kind === "terrain") { inspect(child.geometry, "terrain (1 chunk)"); break; }
+      }
+      break;
+    }
+
+    return report;
+  },
+
   /** Couleurs d'instance nulles = objet rendu en noir pur (le matériau est blanc). */
   scanBlackInstances() {
     const bad = [];
