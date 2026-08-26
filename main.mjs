@@ -227,10 +227,21 @@ const FLOWER_COLORS = [
  * en précision mediump — celle des GPU mobiles — la normale part en vrille et
  * l'éclairement scintille sur une bande entière. La normale portée par
  * l'attribut donne exactement le même rendu facetté, sans dérivée.
+ *
+ * L'attribut `uv` est également supprimé. Aucun matériau du projet n'est
+ * texturé, donc il n'est jamais lu — mais il occupe un emplacement d'attribut
+ * de sommet. Les fleurs étaient le seul objet à cumuler `uv` et couleur
+ * d'instance, soit huit emplacements là où tout le reste en utilise sept, et
+ * elles étaient précisément le seul objet à se corrompre sur GPU mobile
+ * (forme géante et noire : transformation et couleur lues au mauvais endroit).
+ * Le supprimer partout aligne toutes les géométries sur le même agencement.
  */
 function faceted(geometry) {
   const result = geometry.index ? geometry.toNonIndexed() : geometry;
   if (result !== geometry) geometry.dispose();
+
+  result.deleteAttribute("uv");
+  result.deleteAttribute("uv1");
   result.computeVertexNormals();
   return result;
 }
@@ -494,8 +505,6 @@ function createChunk(cx, cz) {
   }
 
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  geometry.deleteAttribute("uv");   // aucun matériau texturé : autant ne pas le dupliquer
-
   // Dédouble les sommets et porte la normale de face : même aspect facetté,
   // sans reconstruction par dérivées dans le fragment shader (voir faceted()).
   const terrainGeometry = faceted(geometry);
@@ -1497,6 +1506,36 @@ window.HORIZON = {
              decouverts: discovered.size };
   },
   get chunkKeys() { return [...chunks.keys()]; },
+  /** Attributs de chaque géométrie instanciée : révèle les disparités de layout. */
+  get terrainAttributes() {
+    for (const group of chunks.values())
+      for (const child of group.children)
+        if (!child.isInstancedMesh) return Object.keys(child.geometry.attributes).join("+");
+    return "aucun";
+  },
+  get instancedLayout() {
+    const rows = [];
+    const seen = new Set();
+    for (const group of chunks.values()) {
+      for (const child of group.children) {
+        if (!child.isInstancedMesh) continue;
+        const kind = child.geometry === trunkGeometry ? "troncs"
+                   : child.geometry === crownGeometry ? "houppiers"
+                   : child.geometry === rockGeometry ? "rochers"
+                   : child.geometry === flowerGeometry ? "fleurs" : "?";
+        if (seen.has(kind)) continue;
+        seen.add(kind);
+        rows.push({
+          type: kind,
+          attributs: Object.keys(child.geometry.attributes).join("+"),
+          sommets: child.geometry.attributes.position.count,
+          instanceColor: child.instanceColor ? "OUI" : "non",
+          triangles: child.geometry.attributes.position.count / 3
+        });
+      }
+    }
+    return rows;
+  },
 
   /**
    * Déplace la caméra d'une fraction d'unité et compare les deux images.
