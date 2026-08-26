@@ -217,6 +217,24 @@ const FLOWER_COLORS = [
   new THREE.Color(0xd7d0f0)
 ];
 
+// Matériaux dédiés par teinte : permettent de dessiner les fleurs sans passer
+// par la couleur d'instance (variante de diagnostic 1 et 3).
+const FLOWER_MATERIALS = FLOWER_COLORS.map(
+  (color) => new THREE.MeshLambertMaterial({ color })
+);
+
+// Chaque variante ne change qu'UNE propriété par rapport à la variante 0,
+// pour que le test sur appareil désigne une cause et non un faisceau.
+const FLOWER_VARIANTS = [
+  "0 actuel : sphere + couleur d'instance",
+  "1 sans couleur d'instance",
+  "2 geometrie tetraedre",
+  "3 sans instanciation",
+  "4 taille x3"
+];
+
+let flowerVariant = 0;
+
 /**
  * Rend une géométrie « à facettes » en dupliquant ses sommets et en portant la
  * normale de face sur chacun.
@@ -294,6 +312,9 @@ const crownGeometry = (() => {
 
 const rockGeometry = faceted(new THREE.DodecahedronGeometry(0.5, 0));
 const flowerGeometry = faceted(new THREE.SphereGeometry(0.11, 5, 4));
+
+// Sans pôles ni triangles minuscules, contrairement à la sphère.
+const flowerTetraGeometry = faceted(new THREE.TetrahedronGeometry(0.14, 0));
 
 const player = createPlayer();
 scene.add(player);
@@ -511,6 +532,7 @@ function createChunk(cx, cz) {
 
   const terrain = new THREE.Mesh(terrainGeometry, terrainMaterial);
   terrain.userData.ownedGeometry = true;
+  terrain.userData.kind = "terrain";
   group.add(terrain);
 
   const chunkBiome = BIOMES[dominantBiomeIndex(centerX, centerZ)];
@@ -650,27 +672,78 @@ function createChunk(cx, cz) {
     }
   );
 
-  const flowerMesh = buildInstanced(
-    flowerGeometry,
-    flowerMaterial,
-    flowers,
-    (obj, flower) => {
-      obj.position.set(flower.x, flower.y + 0.14, flower.z);
-      obj.rotation.set(0, 0, 0);
-      obj.scale.setScalar(1);
-    },
-    (flower) => FLOWER_COLORS[flower.colorIndex]
-  );
+  if (trunkMesh) trunkMesh.userData.kind = "troncs";
+  if (crownMesh) crownMesh.userData.kind = "houppiers";
+  if (rockMesh) rockMesh.userData.kind = "rochers";
 
-  for (const mesh of [trunkMesh, crownMesh, rockMesh, flowerMesh]) {
+  for (const mesh of [trunkMesh, crownMesh, rockMesh]) {
     if (mesh) group.add(mesh);
   }
+
+  addFlowers(group, flowers);
 
   scene.add(group);
   chunks.set(key, group);
   discovered.add(key);
 
   if (DIAG) applyDiagVisibility();
+}
+
+/**
+ * Construit les fleurs selon la variante de diagnostic active.
+ * En variante 0 (celle du jeu), un seul InstancedMesh coloré par instance.
+ */
+function addFlowers(group, flowers) {
+  if (flowers.length === 0) return;
+
+  const scale = flowerVariant === 4 ? 3 : 1;
+  const geometry = flowerVariant === 2 ? flowerTetraGeometry : flowerGeometry;
+
+  const place = (obj, flower) => {
+    obj.position.set(flower.x, flower.y + 0.14, flower.z);
+    obj.rotation.set(0, 0, 0);
+    obj.scale.setScalar(scale);
+  };
+
+  // Variante 3 : un Mesh ordinaire par fleur, aucune instanciation.
+  if (flowerVariant === 3) {
+    for (const flower of flowers) {
+      const mesh = new THREE.Mesh(geometry, FLOWER_MATERIALS[flower.colorIndex]);
+      mesh.position.set(flower.x, flower.y + 0.14, flower.z);
+      mesh.scale.setScalar(scale);
+      mesh.userData.kind = "fleurs";
+      group.add(mesh);
+    }
+    return;
+  }
+
+  // Variante 1 : un InstancedMesh par teinte, sans couleur d'instance.
+  if (flowerVariant === 1) {
+    for (let index = 0; index < FLOWER_MATERIALS.length; index++) {
+      const subset = flowers.filter((flower) => flower.colorIndex === index);
+      const mesh = buildInstanced(geometry, FLOWER_MATERIALS[index], subset, place);
+
+      if (mesh) {
+        mesh.userData.kind = "fleurs";
+        group.add(mesh);
+      }
+    }
+    return;
+  }
+
+  // Variantes 0, 2 et 4 : couleur d'instance conservée.
+  const mesh = buildInstanced(
+    geometry,
+    flowerMaterial,
+    flowers,
+    place,
+    (flower) => FLOWER_COLORS[flower.colorIndex]
+  );
+
+  if (mesh) {
+    mesh.userData.kind = "fleurs";
+    group.add(mesh);
+  }
 }
 
 function disposeChunk(group) {
@@ -1281,17 +1354,8 @@ function applyDiagVisibility() {
 
   for (const group of chunks.values()) {
     for (const child of group.children) {
-      if (!child.isInstancedMesh) {
-        child.visible = diagVisible.terrain;
-      } else if (child.geometry === trunkGeometry) {
-        child.visible = diagVisible.troncs;
-      } else if (child.geometry === crownGeometry) {
-        child.visible = diagVisible.houppiers;
-      } else if (child.geometry === rockGeometry) {
-        child.visible = diagVisible.rochers;
-      } else if (child.geometry === flowerGeometry) {
-        child.visible = diagVisible.fleurs;
-      }
+      const kind = child.userData.kind;
+      if (kind && kind in diagVisible) child.visible = diagVisible[kind];
     }
   }
 }
@@ -1344,6 +1408,27 @@ function buildDiagPanel() {
   });
   row.appendChild(unlit);
 
+  // Variante de fleurs : chaque appui reconstruit le monde avec une seule
+  // propriété changée. Le but est de désigner la cause, pas de la deviner.
+  const variante = document.createElement("button");
+  variante.type = "button";
+  variante.className = "on wide";
+  variante.textContent = FLOWER_VARIANTS[flowerVariant];
+  variante.addEventListener("click", () => {
+    flowerVariant = (flowerVariant + 1) % FLOWER_VARIANTS.length;
+    variante.textContent = FLOWER_VARIANTS[flowerVariant];
+
+    const keep = { x: player.position.x, z: player.position.z };
+    clearWorld();
+    activeChunkKey = "";
+    player.position.x = keep.x;
+    player.position.z = keep.z;
+    refreshChunks(true);
+    applyDiagVisibility();
+    updateHud(true);
+  });
+  row.appendChild(variante);
+
   // Le flou d'arrière-plan de l'interface relit le canevas à chaque image.
   const flou = document.createElement("button");
   flou.type = "button";
@@ -1391,18 +1476,42 @@ window.HORIZON = {
   },
   get objectsInScene() { let n = 0; scene.traverse(() => n++); return n; },
   get instances() {
-    const tally = { trunks: 0, crowns: 0, rocks: 0, flowers: 0 };
+    const tally = { troncs: 0, houppiers: 0, rochers: 0, fleurs: 0, terrain: 0 };
 
     for (const group of chunks.values()) {
       for (const child of group.children) {
-        if (!child.isInstancedMesh) continue;
-        if (child.geometry === trunkGeometry) tally.trunks += child.count;
-        else if (child.geometry === crownGeometry) tally.crowns += child.count;
-        else if (child.geometry === rockGeometry) tally.rocks += child.count;
-        else if (child.geometry === flowerGeometry) tally.flowers += child.count;
+        const kind = child.userData.kind;
+        if (!(kind in tally)) continue;
+        tally[kind] += child.isInstancedMesh ? child.count : 1;
       }
     }
 
+    return tally;
+  },
+  /** Nombre d'objets de scène par famille, et combien sont visibles. */
+  get flowerProbe() {
+    for (const group of chunks.values())
+      for (const child of group.children)
+        if (child.userData.kind === "fleurs")
+          return {
+            instancie: !!child.isInstancedMesh,
+            couleurInstance: child.instanceColor ? "OUI" : "non",
+            attributs: Object.keys(child.geometry.attributes).join("+"),
+            sommets: child.geometry.attributes.position.count,
+            materiau: child.material.color.getHexString()
+          };
+    return null;
+  },
+  get kindVisibility() {
+    const tally = {};
+    for (const group of chunks.values()) {
+      for (const child of group.children) {
+        const kind = child.userData.kind || "?";
+        tally[kind] = tally[kind] || { objets: 0, visibles: 0 };
+        tally[kind].objets++;
+        if (child.visible) tally[kind].visibles++;
+      }
+    }
     return tally;
   },
   get camPos() { return { x: camera.position.x, y: camera.position.y, z: camera.position.z }; },
