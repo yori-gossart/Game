@@ -22,7 +22,10 @@ const renderer = new THREE.WebGLRenderer({
 });
 
 // Paliers de résolution : on dégrade la densité de pixels avant la qualité visuelle.
-const PIXEL_RATIO_STEPS = [1.35, 1.15, 1.0, 0.85];
+// Le palier 0.85 descendait sous un pixel CSS : sur un écran DPR 3 cela rend à
+// 28 % de la résolution physique, et l'image remonte visiblement en escalier.
+// Le plancher est désormais 1.0.
+const PIXEL_RATIO_STEPS = [1.35, 1.15, 1.0];
 let pixelStep = 0;
 
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, PIXEL_RATIO_STEPS[0]));
@@ -53,7 +56,17 @@ const FOG_NEAR = FOG_FAR * 0.42;
 
 scene.fog = new THREE.Fog(FOG_COLOR, FOG_NEAR, FOG_FAR);
 
-const camera = new THREE.PerspectiveCamera(56, 1, 0.1, FOG_FAR + 60);
+// near/far : la précision du depth buffer varie en d²·(far-near)/(2·far·near).
+// Avec near=0.1 et far=122, un tampon 16 bits — courant sur Android — ne
+// distingue plus que 0.24 u à 40 u de distance : le terrain et le plan d'eau,
+// quasi coplanaires sur les rives plates, se disputent alors la profondeur sur
+// une bande large de 5 à 30 unités. near=0.5 et far resserré divisent l'erreur
+// par cinq. near ne peut pas monter davantage sans rogner les arbres proches
+// quand la caméra en traverse un.
+const CAMERA_NEAR = 0.5;
+const CAMERA_FAR = FOG_FAR + 20;
+
+const camera = new THREE.PerspectiveCamera(56, 1, CAMERA_NEAR, CAMERA_FAR);
 
 const hemiLight = new THREE.HemisphereLight(0xf7fbff, 0x645c42, 2.15);
 scene.add(hemiLight);
@@ -62,18 +75,32 @@ const sunLight = new THREE.DirectionalLight(0xffe5ad, 2.35);
 sunLight.position.set(-42, 60, 24);
 scene.add(sunLight);
 
+// Le soleil était à 122 u du joueur pour un plan far à 122, et à 24° de
+// hauteur alors que la caméra ne regarde jamais au-dessus de 21° : il n'était
+// jamais rendu. On le rapproche dans le volume visible, à la même direction
+// que la lumière et à une hauteur atteignable, en conservant sa taille
+// apparente (rayon / distance constant).
+const SUN_OFFSET = new THREE.Vector3(-50.3, 14.5, 28.8);
+
 const sun = new THREE.Mesh(
-  new THREE.SphereGeometry(3.5, 12, 8),
+  new THREE.SphereGeometry(1.71, 12, 8),
   new THREE.MeshBasicMaterial({ color: 0xffe9ac, fog: false })
 );
-sun.position.set(-72, 49, -86);
+sun.position.copy(SUN_OFFSET);
 scene.add(sun);
 
 const waterMaterial = new THREE.MeshLambertMaterial({
   color: 0x599aaa,
   transparent: true,
   opacity: 0.78,
-  depthWrite: true
+  depthWrite: true,
+  // Sur une rive plate, l'eau et le terrain sont à quelques centimètres l'un
+  // de l'autre sur des dizaines d'unités. Le décalage de polygone tranche le
+  // départage dans le même sens partout : le terrain gagne, la rive est nette
+  // au lieu de scintiller.
+  polygonOffset: true,
+  polygonOffsetFactor: 1,
+  polygonOffsetUnits: 1
 });
 
 // Le plan d'eau suit le joueur et doit dépasser la portée du brouillard,
@@ -155,24 +182,17 @@ const biomeTreeColors = BIOMES.map((biome) => new THREE.Color(biome.tree));
 // Un seul matériau de terrain : la couleur de biome passe par les couleurs de
 // sommets, ce qui fond les biomes entre eux au lieu de les découper au chunk.
 const terrainMaterial = new THREE.MeshLambertMaterial({
-  vertexColors: true,
-  flatShading: true
+  vertexColors: true
 });
 
-const rockMaterial = new THREE.MeshLambertMaterial({
-  color: 0x7d7b73,
-  flatShading: true
-});
+const rockMaterial = new THREE.MeshLambertMaterial({ color: 0x7d7b73 });
 
-const trunkMaterial = new THREE.MeshLambertMaterial({
-  color: 0x765336,
-  flatShading: true
-});
+const trunkMaterial = new THREE.MeshLambertMaterial({ color: 0x765336 });
 
 // Matériaux mutualisés : la teinte de feuillage et de fleur passe par la
 // couleur d'instance, pas par un matériau supplémentaire par objet.
-const crownMaterial = new THREE.MeshLambertMaterial({ flatShading: true });
-const flowerMaterial = new THREE.MeshLambertMaterial({ flatShading: true });
+const crownMaterial = new THREE.MeshLambertMaterial();
+const flowerMaterial = new THREE.MeshLambertMaterial();
 
 /** Modulo toujours positif : les coordonnées de chunk peuvent être négatives. */
 function wrapIndex(value, length) {
@@ -184,6 +204,24 @@ const FLOWER_COLORS = [
   new THREE.Color(0xe8a3a1),
   new THREE.Color(0xd7d0f0)
 ];
+
+/**
+ * Rend une géométrie « à facettes » en dupliquant ses sommets et en portant la
+ * normale de face sur chacun.
+ *
+ * `flatShading: true` demande au fragment shader de reconstruire la normale
+ * avec dFdx/dFdy sur la position vue. Sur une surface regardée en rasant, ces
+ * dérivées deviennent colinéaires et leur produit vectoriel tend vers zéro :
+ * en précision mediump — celle des GPU mobiles — la normale part en vrille et
+ * l'éclairement scintille sur une bande entière. La normale portée par
+ * l'attribut donne exactement le même rendu facetté, sans dérivée.
+ */
+function faceted(geometry) {
+  const result = geometry.index ? geometry.toNonIndexed() : geometry;
+  if (result !== geometry) geometry.dispose();
+  result.computeVertexNormals();
+  return result;
+}
 
 /**
  * Concatène des géométries non indexées partageant les mêmes attributs.
@@ -212,8 +250,11 @@ function mergeGeometries(geometries) {
   return merged;
 }
 
-const trunkGeometry = new THREE.CylinderGeometry(0.14, 0.23, 1.35, 5);
-trunkGeometry.translate(0, 0.675, 0);
+const trunkGeometry = (() => {
+  const g = new THREE.CylinderGeometry(0.14, 0.23, 1.35, 5);
+  g.translate(0, 0.675, 0);
+  return faceted(g);
+})();
 
 // Les deux cônes du feuillage sont fusionnés : un arbre = 1 tronc + 1 houppier.
 const crownGeometry = (() => {
@@ -225,11 +266,11 @@ const crownGeometry = (() => {
   const merged = mergeGeometries([lower, upper]);
   lower.dispose();
   upper.dispose();
-  return merged;
+  return faceted(merged);
 })();
 
-const rockGeometry = new THREE.DodecahedronGeometry(0.5, 0);
-const flowerGeometry = new THREE.SphereGeometry(0.11, 5, 4);
+const rockGeometry = faceted(new THREE.DodecahedronGeometry(0.5, 0));
+const flowerGeometry = faceted(new THREE.SphereGeometry(0.11, 5, 4));
 
 const player = createPlayer();
 scene.add(player);
@@ -238,32 +279,32 @@ const keys = new Set();
 
 function createPlayer() {
   const group = new THREE.Group();
-  const blue = new THREE.MeshLambertMaterial({ color: 0x284d72, flatShading: true });
-  const blueDark = new THREE.MeshLambertMaterial({ color: 0x18354e, flatShading: true });
-  const skin = new THREE.MeshLambertMaterial({ color: 0xd8aa83, flatShading: true });
-  const hair = new THREE.MeshLambertMaterial({ color: 0x3d2d27, flatShading: true });
-  const bagMat = new THREE.MeshLambertMaterial({ color: 0x8a5f36, flatShading: true });
+  const blue = new THREE.MeshLambertMaterial({ color: 0x284d72 });
+  const blueDark = new THREE.MeshLambertMaterial({ color: 0x18354e });
+  const skin = new THREE.MeshLambertMaterial({ color: 0xd8aa83 });
+  const hair = new THREE.MeshLambertMaterial({ color: 0x3d2d27 });
+  const bagMat = new THREE.MeshLambertMaterial({ color: 0x8a5f36 });
 
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.38, 0.72, 4, 8), blue);
+  const body = new THREE.Mesh(faceted(new THREE.CapsuleGeometry(0.38, 0.72, 4, 8)), blue);
   body.position.y = 1.15;
 
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 8), skin);
+  const head = new THREE.Mesh(faceted(new THREE.SphereGeometry(0.34, 10, 8)), skin);
   head.position.y = 1.95;
 
   const hairCap = new THREE.Mesh(
-    new THREE.SphereGeometry(0.35, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.52),
+    faceted(new THREE.SphereGeometry(0.35, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.52)),
     hair
   );
   hairCap.position.y = 2.04;
 
-  const legGeo = new THREE.CapsuleGeometry(0.105, 0.48, 3, 5);
+  const legGeo = faceted(new THREE.CapsuleGeometry(0.105, 0.48, 3, 5));
   const leftLeg = new THREE.Mesh(legGeo, blueDark);
   leftLeg.position.set(-0.19, 0.34, 0);
 
   const rightLeg = leftLeg.clone();
   rightLeg.position.x = 0.19;
 
-  const armGeo = new THREE.CapsuleGeometry(0.085, 0.43, 3, 5);
+  const armGeo = faceted(new THREE.CapsuleGeometry(0.085, 0.43, 3, 5));
   const leftArm = new THREE.Mesh(armGeo, skin);
   leftArm.position.set(-0.48, 1.18, 0);
   leftArm.rotation.z = -0.15;
@@ -274,7 +315,7 @@ function createPlayer() {
 
   // L'avant du personnage est son +Z local (voir player.rotation.y plus bas) :
   // le sac se porte donc en -Z, côté caméra quand on s'éloigne.
-  const bag = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.56, 0.26), bagMat);
+  const bag = new THREE.Mesh(faceted(new THREE.BoxGeometry(0.42, 0.56, 0.26)), bagMat);
   bag.position.set(0, 1.19, -0.4);
   bag.rotation.x = 0.08;
 
@@ -382,6 +423,11 @@ function blendedTerrainColor(x, z, target) {
 
 const dummy = new THREE.Object3D();
 
+// Objets temporaires réutilisés par la boucle de rendu : allouer à chaque
+// image fait travailler le ramasse-miettes en continu sur mobile.
+const desiredCamera = new THREE.Vector3();
+const keyboardVector = { x: 0, z: 0 };
+
 function buildInstanced(geometry, material, items, applyTransform, colorOf) {
   if (items.length === 0) return null;
 
@@ -436,9 +482,13 @@ function createChunk(cx, cz) {
   }
 
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  geometry.computeVertexNormals();
+  geometry.deleteAttribute("uv");   // aucun matériau texturé : autant ne pas le dupliquer
 
-  const terrain = new THREE.Mesh(geometry, terrainMaterial);
+  // Dédouble les sommets et porte la normale de face : même aspect facetté,
+  // sans reconstruction par dérivées dans le fragment shader (voir faceted()).
+  const terrainGeometry = faceted(geometry);
+
+  const terrain = new THREE.Mesh(terrainGeometry, terrainMaterial);
   terrain.userData.ownedGeometry = true;
   group.add(terrain);
 
@@ -954,7 +1004,9 @@ function keyboardMovement() {
     z /= length;
   }
 
-  return { x, z };
+  keyboardVector.x = x;
+  keyboardVector.z = z;
+  return keyboardVector;
 }
 
 function animatePlayer(moving, sprinting, delta) {
@@ -1076,8 +1128,9 @@ function updateAdaptiveResolution(delta) {
     return;
   }
 
-  // On ne remonte qu'après deux fenêtres confortables, pour éviter l'oscillation.
-  if (fps > 57 && pixelStep > 0) {
+  // Le seuil de remontée était à 57 alors que l'affichage plafonne à 60 : un
+  // téléphone stabilisé à 50-56 ne remontait jamais. 52 laisse la marge.
+  if (fps > 52 && pixelStep > 0) {
     goodWindows++;
 
     if (goodWindows >= 2) {
@@ -1144,7 +1197,7 @@ function animate() {
   const horizontal = Math.cos(cameraPitch) * CAMERA_DISTANCE;
   const vertical = Math.sin(cameraPitch) * CAMERA_DISTANCE;
 
-  const desiredCamera = new THREE.Vector3(
+  desiredCamera.set(
     player.position.x - Math.sin(cameraYaw) * horizontal,
     player.position.y + vertical + 1.4,
     player.position.z + Math.cos(cameraYaw) * horizontal
@@ -1158,8 +1211,11 @@ function animate() {
     player.position.z
   );
 
-  sun.position.x = player.position.x - 72;
-  sun.position.z = player.position.z - 86;
+  sun.position.set(
+    player.position.x + SUN_OFFSET.x,
+    player.position.y + SUN_OFFSET.y,
+    player.position.z + SUN_OFFSET.z
+  );
 
   hudTimer += delta;
   saveTimer += delta;
@@ -1227,5 +1283,198 @@ window.HORIZON = {
   get camPos() { return { x: camera.position.x, y: camera.position.y, z: camera.position.z }; },
   move(dx, dy) { joystickVector.x = dx; joystickVector.y = dy; },
   setRun(value) { running = value; },
-  setYaw(value) { cameraYaw = value; }
+  setYaw(value) { cameraYaw = value; },
+  setPitch(value) { cameraPitch = clampPitch(value); },
+
+  // --- Hooks d'audit ---
+  get depthBits() {
+    const gl = renderer.getContext();
+    return {
+      depth: gl.getParameter(gl.DEPTH_BITS),
+      stencil: gl.getParameter(gl.STENCIL_BITS),
+      samples: gl.getParameter(gl.SAMPLES),
+      renderer: (() => {
+        const ext = gl.getExtension("WEBGL_debug_renderer_info");
+        return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : "n/a";
+      })()
+    };
+  },
+  get nearFar() { return { near: camera.near, far: camera.far }; },
+  setNearFar(near, far) {
+    camera.near = near;
+    camera.far = far;
+    camera.updateProjectionMatrix();
+  },
+  get heapMB() {
+    const m = performance.memory;
+    return m ? {
+      used: +(m.usedJSHeapSize / 1048576).toFixed(2),
+      total: +(m.totalJSHeapSize / 1048576).toFixed(2)
+    } : null;
+  },
+  get waterY() { return water.position.y; },
+  terrainAt(x, z) { return terrainHeight(x, z); },
+  teleport(x, z) {
+    player.position.x = x;
+    player.position.z = z;
+    player.position.y = Math.max(terrainHeight(x, z), -2.45);
+    refreshChunks(true);
+    snapCamera();
+    updateHud(true);
+  },
+  newWorld() { startNewWorld(); },
+  timeSave(n = 30) {
+    const t0 = performance.now();
+    for (let i = 0; i < n; i++) saveGame();
+    const ms = (performance.now() - t0) / n;
+    return { msParEcriture: +ms.toFixed(3), octets: (localStorage.getItem(SAVE_KEY) || "").length,
+             decouverts: discovered.size };
+  },
+  get chunkKeys() { return [...chunks.keys()]; },
+
+  /**
+   * Déplace la caméra d'une fraction d'unité et compare les deux images.
+   * Une surface saine bouge de quelques pixels ; deux surfaces qui se
+   * disputent la profondeur basculent sur de larges zones.
+   */
+  jitterTest(delta = 0.01, threshold = 12) {
+    const gl = renderer.getContext();
+    const w = gl.drawingBufferWidth;
+    const h = gl.drawingBufferHeight;
+
+    const grab = () => {
+      renderer.render(scene, camera);
+      const buf = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      return buf;
+    };
+
+    const before = grab();
+    camera.position.y += delta;
+    camera.updateMatrixWorld(true);
+    const after = grab();
+    camera.position.y -= delta;
+    camera.updateMatrixWorld(true);
+
+    let diff = 0;
+    for (let i = 0; i < before.length; i += 4) {
+      const d = Math.max(
+        Math.abs(before[i] - after[i]),
+        Math.abs(before[i + 1] - after[i + 1]),
+        Math.abs(before[i + 2] - after[i + 2])
+      );
+      if (d > threshold) diff++;
+    }
+
+    return { differing: diff, total: w * h, fraction: +(diff / (w * h)).toFixed(5) };
+  },
+
+  /**
+   * Rend deux fois la même scène avec deux réglages near/far et compare les
+   * tampons pixel à pixel. Même image, même résolution : toute différence
+   * vient de la précision de profondeur.
+   */
+  compareNearFar(a, b, threshold = 12) {
+    const gl = renderer.getContext();
+    const w = gl.drawingBufferWidth;
+    const h = gl.drawingBufferHeight;
+
+    const grab = ([near, far]) => {
+      camera.near = near;
+      camera.far = far;
+      camera.updateProjectionMatrix();
+      renderer.render(scene, camera);
+
+      const buf = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      return buf;
+    };
+
+    const pa = grab(a);
+    const pb = grab(b);
+
+    let diff = 0;
+    for (let i = 0; i < pa.length; i += 4) {
+      const d = Math.max(
+        Math.abs(pa[i] - pb[i]),
+        Math.abs(pa[i + 1] - pb[i + 1]),
+        Math.abs(pa[i + 2] - pb[i + 2])
+      );
+      if (d > threshold) diff++;
+    }
+
+    return { differing: diff, total: w * h, fraction: +(diff / (w * h)).toFixed(5), w, h };
+  },
+
+  /**
+   * Rend une image puis relit le tampon : mesure la proportion de pixels
+   * voisins fortement discordants. Le z-fighting produit un moucheté à haute
+   * fréquence, invisible pour cette métrique sur un rendu low-poly sain.
+   */
+  speckle(threshold = 40) {
+    renderer.render(scene, camera);
+
+    const gl = renderer.getContext();
+    const w = gl.drawingBufferWidth;
+    const h = gl.drawingBufferHeight;
+    const pixels = new Uint8Array(w * h * 4);
+
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+    let noisy = 0;
+    let total = 0;
+
+    // Bande médiane verticale : on ignore le HUD et les bords.
+    for (let y = Math.floor(h * 0.15); y < Math.floor(h * 0.85); y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const a = (y * w + x) * 4;
+        const b = (y * w + x + 1) * 4;
+        const d = Math.max(
+          Math.abs(pixels[a] - pixels[b]),
+          Math.abs(pixels[a + 1] - pixels[b + 1]),
+          Math.abs(pixels[a + 2] - pixels[b + 2])
+        );
+
+        if (d > threshold) noisy++;
+        total++;
+      }
+    }
+
+    return { noisyFraction: +(noisy / total).toFixed(5), noisy, total, w, h };
+  },
+
+  /** Cherche des coordonnées ou couleurs non finies dans toutes les géométries en scène. */
+  scanNonFinite() {
+    const bad = [];
+
+    scene.traverse((object) => {
+      const geometry = object.geometry;
+      if (!geometry || !geometry.attributes) return;
+
+      for (const [name, attribute] of Object.entries(geometry.attributes)) {
+        const array = attribute.array;
+
+        for (let i = 0; i < array.length; i++) {
+          if (!Number.isFinite(array[i])) {
+            bad.push({ object: object.type, attribute: name, index: i, value: String(array[i]) });
+            break;
+          }
+        }
+      }
+
+      if (object.isInstancedMesh) {
+        const m = object.instanceMatrix.array;
+        for (let i = 0; i < m.length; i++) {
+          if (!Number.isFinite(m[i])) { bad.push({ object: "instanceMatrix", index: i }); break; }
+        }
+      }
+
+      const p = object.position;
+      if (p && (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z))) {
+        bad.push({ object: object.type, attribute: "position", value: `${p.x},${p.y},${p.z}` });
+      }
+    });
+
+    return bad;
+  }
 };
