@@ -47,6 +47,18 @@ const CAMERA_DISTANCE = 13;
 const RUN_MULTIPLIER = 1.8;
 const SAVE_KEY = "horizon-proto-0.2-save";
 
+// Mode diagnostic (?diag) : déclaré ici car createChunk le consulte, et les
+// premiers chunks sont bâtis pendant l'évaluation du module.
+const DIAG = new URLSearchParams(location.search).has("diag");
+
+const diagVisible = {
+  terrain: true, troncs: true, houppiers: true, rochers: true,
+  fleurs: true, eau: true, soleil: true
+};
+
+let diagUnlit = false;
+let diagFlou = true;
+
 // Le terrain chargé couvre au minimum CHUNK_RADIUS * CHUNK_SIZE unités dans chaque
 // direction. Le brouillard doit être totalement opaque avant cette limite, sinon
 // le bord du monde devient visible à l'horizon.
@@ -648,6 +660,8 @@ function createChunk(cx, cz) {
   scene.add(group);
   chunks.set(key, group);
   discovered.add(key);
+
+  if (DIAG) applyDiagVisibility();
 }
 
 function disposeChunk(group) {
@@ -1244,6 +1258,108 @@ function animate() {
 
 animate();
 
+// ---------------------------------------------------------------------------
+// Mode diagnostic : ?diag dans l'URL.
+// Sert à isoler sur l'appareil un artefact non reproductible en test. Chaque
+// bouton retire une famille d'objets de la scène ; celui qui fait disparaître
+// l'artefact le désigne. Inactif — et non construit — sans le paramètre.
+// ---------------------------------------------------------------------------
+function applyDiagVisibility() {
+  if (!DIAG) return;
+
+  water.visible = diagVisible.eau;
+  sun.visible = diagVisible.soleil;
+
+  for (const group of chunks.values()) {
+    for (const child of group.children) {
+      if (!child.isInstancedMesh) {
+        child.visible = diagVisible.terrain;
+      } else if (child.geometry === trunkGeometry) {
+        child.visible = diagVisible.troncs;
+      } else if (child.geometry === crownGeometry) {
+        child.visible = diagVisible.houppiers;
+      } else if (child.geometry === rockGeometry) {
+        child.visible = diagVisible.rochers;
+      } else if (child.geometry === flowerGeometry) {
+        child.visible = diagVisible.fleurs;
+      }
+    }
+  }
+}
+
+function buildDiagPanel() {
+  const gl = renderer.getContext();
+  const ext = gl.getExtension("WEBGL_debug_renderer_info");
+  const frag = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+
+  const panel = document.createElement("div");
+  panel.id = "diag";
+
+  const info = document.createElement("div");
+  info.className = "diag-info";
+  info.textContent =
+    `depth ${gl.getParameter(gl.DEPTH_BITS)} · stencil ${gl.getParameter(gl.STENCIL_BITS)} · ` +
+    `msaa ${gl.getParameter(gl.SAMPLES)} · highp ${frag ? frag.precision : "?"} · ` +
+    `dpr ${(window.devicePixelRatio || 1).toFixed(2)} · pr ${renderer.getPixelRatio().toFixed(2)}\n` +
+    (ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : "GPU inconnu");
+  panel.appendChild(info);
+
+  const row = document.createElement("div");
+  row.className = "diag-row";
+
+  for (const key of Object.keys(diagVisible)) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = key;
+    button.className = "on";
+    button.addEventListener("click", () => {
+      diagVisible[key] = !diagVisible[key];
+      button.className = diagVisible[key] ? "on" : "off";
+      applyDiagVisibility();
+    });
+    row.appendChild(button);
+  }
+
+  // Éclairage : bascule tous les matériaux en couleur plate, sans lumière.
+  // Si le noir disparaît ainsi, il vient du calcul d'éclairement (normales).
+  const unlit = document.createElement("button");
+  unlit.type = "button";
+  unlit.textContent = "sans lumière";
+  unlit.className = "on";
+  unlit.addEventListener("click", () => {
+    diagUnlit = !diagUnlit;
+    hemiLight.intensity = diagUnlit ? 0 : 2.15;
+    sunLight.intensity = diagUnlit ? 0 : 2.35;
+    ambient.intensity = diagUnlit ? 3.2 : 0;
+    unlit.className = diagUnlit ? "off" : "on";
+  });
+  row.appendChild(unlit);
+
+  // Le flou d'arrière-plan de l'interface relit le canevas à chaque image.
+  const flou = document.createElement("button");
+  flou.type = "button";
+  flou.textContent = "flou UI";
+  flou.className = "on";
+  flou.addEventListener("click", () => {
+    diagFlou = !diagFlou;
+    document.body.classList.toggle("no-blur", !diagFlou);
+    flou.className = diagFlou ? "on" : "off";
+  });
+  row.appendChild(flou);
+
+  panel.appendChild(row);
+  document.body.appendChild(panel);
+}
+
+// Lumière plate utilisée uniquement par le mode diagnostic.
+const ambient = new THREE.AmbientLight(0xffffff, 0);
+scene.add(ambient);
+
+if (DIAG) {
+  buildDiagPanel();
+  applyDiagVisibility();
+}
+
 // Sonde de diagnostic, utilisée par les tests automatisés.
 window.HORIZON = {
   get chunks() { return chunks.size; },
@@ -1323,6 +1439,56 @@ window.HORIZON = {
     updateHud(true);
   },
   newWorld() { startNewWorld(); },
+  setSeed(seed, x = 1.5, z = 1.5) {
+    clearWorld();
+    worldSeed = Math.floor(seed);
+    activeChunkKey = "";
+    player.position.set(x, 0, z);
+    player.position.y = Math.max(terrainHeight(x, z), -2.45);
+    refreshChunks(true);
+    snapCamera();
+    updateHud(true);
+    return { seed: worldSeed, pos: window.HORIZON.pos };
+  },
+  /** Couleurs d'instance nulles = objet rendu en noir pur (le matériau est blanc). */
+  scanBlackInstances() {
+    const bad = [];
+    for (const [key, group] of chunks.entries()) {
+      for (const child of group.children) {
+        if (!child.isInstancedMesh || !child.instanceColor) continue;
+        const a = child.instanceColor.array;
+        for (let i = 0; i < child.count; i++) {
+          if (a[i*3] === 0 && a[i*3+1] === 0 && a[i*3+2] === 0) {
+            bad.push({ chunk: key, instance: i, count: child.count,
+                       bufferLength: a.length, expected: child.count * 3 });
+          }
+        }
+      }
+    }
+    return bad;
+  },
+  /** Cherche des instances à l'échelle ou à la position aberrante. */
+  scanGiantInstances(maxScale = 5, maxDist = 200) {
+    const m = new THREE.Matrix4();
+    const pos = new THREE.Vector3(), scl = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const bad = [];
+    for (const [key, group] of chunks.entries()) {
+      for (const child of group.children) {
+        if (!child.isInstancedMesh) continue;
+        for (let i = 0; i < child.count; i++) {
+          child.getMatrixAt(i, m);
+          m.decompose(pos, quat, scl);
+          const s = Math.max(scl.x, scl.y, scl.z);
+          if (!Number.isFinite(s) || s > maxScale || pos.length() > maxDist) {
+            bad.push({ chunk: key, instance: i, scale: [scl.x, scl.y, scl.z],
+                       pos: [pos.x, pos.y, pos.z] });
+          }
+        }
+      }
+    }
+    return bad;
+  },
   timeSave(n = 30) {
     const t0 = performance.now();
     for (let i = 0; i < n; i++) saveGame();

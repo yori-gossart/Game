@@ -284,3 +284,56 @@ body.failed #loading span {
     height: 70px;
   }
 }
+
+/* Mode diagnostic (?diag) — n'apparaît qu'avec le paramètre d'URL. */
+#diag {
+  position: absolute;
+  z-index: 30;
+  left: 50%;
+  top: max(8px, env(safe-area-inset-top));
+  transform: translateX(-50%);
+  width: min(94vw, 520px);
+  padding: 7px 8px;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 10px;
+  background: #101a20;
+  color: #eaf2f6;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+#diag .diag-info {
+  margin-bottom: 6px;
+  white-space: pre-line;
+  opacity: .85;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 9px;
+}
+
+#diag .diag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+#diag button {
+  flex: 1 1 auto;
+  min-height: 34px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid rgba(255,255,255,.3);
+  font-size: 10px;
+  font-weight: 700;
+  touch-action: none;
+}
+
+#diag button.on { background: #dff0e2; color: #14301c; }
+#diag button.off { background: #4a2222; color: #ffd9d9; text-decoration: line-through; }
+
+/* Coupe le flou d'arrière-plan de toute l'interface. */
+body.no-blur #hud,
+body.no-blur #joystick,
+body.no-blur #actions button {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
