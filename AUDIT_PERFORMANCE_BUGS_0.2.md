@@ -12,6 +12,8 @@ Cette différence avec la cible est déterminante et conditionne la lecture de t
 
 L'audit ne trouve **aucune fuite mémoire**, **aucune corruption de terrain**, **aucune valeur non finie**, **aucun trou ni recouvrement de chunk**, et **aucune erreur console**. La gestion des chunks est correcte, y compris en coordonnées négatives et sous sollicitation extrême (300 sauts de chunk enchaînés). 26 vérifications automatisées passent avant comme après correction.
 
+> **Mise à jour — cause trouvée.** Ce résumé a d'abord conclu à une cause non identifiée. Le mode diagnostic embarqué (`?diag`) a ensuite permis à l'utilisateur de désigner les **fleurs** sur l'appareil, et l'inspection des agencements d'attributs a livré la cause exacte : voir **B0** ci-dessous. Les quatre défauts décrits plus bas restent des défauts réels et corrigés, mais **aucun n'était la cause de l'artefact noir**. Je laisse le raisonnement initial intact : il documente une piste plausible, mesurée, et fausse.
+
 Le sujet principal — la bande horizontale noire/jaune observée sur téléphone — **n'a pas pu être reproduite** dans cet environnement. Je l'écris sans détour : la cause n'est pas *démontrée*. En revanche, l'audit a identifié et mesuré **quatre défauts structurels réels** qui, réunis, expliquent le symptôme décrit, et dont trois dépendent exactement des paramètres matériels que cet environnement ne reproduit pas :
 
 1. la précision du depth buffer est gaspillée par un `near` très bas, au point qu'un tampon 16 bits ne sépare plus l'eau du terrain sur une bande de 5 à 30 unités ;
@@ -26,6 +28,39 @@ Deux bugs secondaires ont été trouvés et corrigés au passage, dont un franc 
 ---
 
 ## 2. Bugs trouvés
+
+### B0 — Artefact noir : attribut `uv` inutile sur une géométrie instanciée colorée · **P0 — cause réelle**
+
+**Symptôme.** Grands polygones noirs opaques à arêtes rectilignes, apparaissant et disparaissant plusieurs dizaines de fois par seconde pendant le déplacement, à des endroits précis du monde.
+
+**Ce que les captures ont établi.** Les formes sont pleines, opaques, à arêtes franches — pas un moucheté entrelacé, donc **pas du z-fighting**. Indice décisif : les éléments d'interface portant un `backdrop-filter` virent au noir **uniquement là où la forme passe derrière eux** (image 1 : HUD noir, forme en haut ; image 2 : HUD normal, joystick et bouton noirs, forme en bas), texte blanc intact. Le noir est donc de la géométrie 3D, et l'interface ne fait que le flouter.
+
+**Reproduction côté données : négative.** Sur la seed 423135 aux quatre positions relevées, puis sur 200 emplacements de la même seed : 0 instance à couleur nulle, 0 échelle ou position aberrante, 0 valeur non finie. Les tampons JavaScript sont sains.
+
+**Isolation sur l'appareil.** Le mode diagnostic `?diag` retire une famille d'objets à la fois. Couper les **fleurs** fait disparaître l'artefact.
+
+**Cause.** L'inspection des agencements d'attributs révèle ce que les fleurs avaient d'unique :
+
+| type | attributs de géométrie | couleur d'instance | emplacements |
+| --- | --- | --- | --- |
+| troncs | position + normal + uv | non | 7 |
+| houppiers | position + normal | **oui** | 7 |
+| rochers | position + normal + uv | non | 7 |
+| **fleurs** | position + normal + **uv** | **oui** | **8** |
+
+Les fleurs étaient le seul dessin à cumuler un attribut `uv` **et** une couleur d'instance : huit emplacements d'attributs de sommet contre sept partout ailleurs (position, normale, uv, les quatre vecteurs de la matrice d'instance, la couleur). Le symptôme rapporté — polygone à la fois **géant** et **noir** — correspond exactement à une matrice d'instance et une couleur lues au mauvais emplacement.
+
+Cet `uv` n'était lu par personne : aucun matériau du projet n'est texturé, l'audit mesure `textures = 0`. C'était un attribut mort qui coûtait un emplacement.
+
+**Correction.** `faceted()` supprime désormais `uv` (et `uv1`) sur toutes les géométries. Les quatre types partagent l'agencement `position + normal`, et les fleurs deviennent structurellement identiques aux houppiers, qui fonctionnaient.
+
+**Validation.** Agencements vérifiés identiques ; terrain conservant bien son attribut `color` (`position+normal+color` — sans lui il rendrait noir) ; couleurs des fleurs intactes ; 32/32 et 26/26 au vert ; aucune erreur console.
+
+**Limite assumée.** Le mécanisme précis côté pilote n'est pas prouvable depuis un environnement de rendu logiciel. La corrélation est en revanche exacte — le seul objet au layout distinct est le seul à se corrompre — et la correction est justifiée indépendamment, puisqu'elle supprime un attribut mort.
+
+**Ce que cet épisode enseigne.** Trois hypothèses successives (précision de profondeur, coplanarité eau/terrain, dérivées de `flatShading`) étaient mesurables, plausibles, et fausses. C'est l'instrumentation embarquée qui a tranché, pas le raisonnement. Face à un artefact spécifique à un appareil, livrer un outil de bissection à l'utilisateur vaut mieux que multiplier les hypothèses à distance.
+
+---
 
 ### B1 — Précision de profondeur gaspillée · **P1**
 
