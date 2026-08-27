@@ -1,4 +1,6 @@
 import * as THREE from "./vendor/three/three.module.min.js";
+import { createFogNomad } from "./fognomad.mjs";
+import { bindRunUI, bindPerfOverlay } from "./fognomad-ui.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -49,7 +51,9 @@ const SAVE_KEY = "horizon-proto-0.2-save";
 
 // Mode diagnostic (?diag) : déclaré ici car createChunk le consulte, et les
 // premiers chunks sont bâtis pendant l'évaluation du module.
-const DIAG = new URLSearchParams(location.search).has("diag");
+const PARAMS = new URLSearchParams(location.search);
+const DIAG = PARAMS.has("diag");
+const FOGTEST = PARAMS.has("fogtest") || DIAG;
 
 const diagVisible = {
   terrain: true, troncs: true, houppiers: true, rochers: true,
@@ -320,6 +324,18 @@ const flowerGeometry = faceted(new THREE.SphereGeometry(0.11, 5, 4));
 
 const player = createPlayer();
 scene.add(player);
+
+// La couche de jeu est créée avant la génération du premier chunk : createChunk
+// lui demande de peupler chaque chunk en ressources.
+const game = createFogNomad({
+  THREE,
+  scene,
+  camera,
+  player,
+  renderer,
+  terrainHeight,
+  onRestart: () => startNewRun()
+});
 
 const keys = new Set();
 
@@ -683,6 +699,7 @@ function createChunk(cx, cz) {
   }
 
   addFlowers(group, flowers);
+  game.populateChunk(group, key, cx, cz, centerX, centerZ, random01);
 
   scene.add(group);
   chunks.set(key, group);
@@ -833,6 +850,7 @@ function refreshChunks(force = false) {
       Math.abs(chunkZ - cz) > CHUNK_RADIUS
     ) {
       disposeChunk(group);
+      game.onChunkDisposed(chunkKey);
       chunks.delete(chunkKey);
     }
   }
@@ -862,8 +880,9 @@ function flushBuildQueue() {
 }
 
 function clearWorld() {
-  for (const group of chunks.values()) {
+  for (const [key, group] of chunks.entries()) {
     disposeChunk(group);
+    game.onChunkDisposed(key);
   }
 
   chunks.clear();
@@ -908,8 +927,7 @@ function loadGame() {
     }
 
     worldSeed = Math.floor(data.seed);
-    player.position.x = data.x;
-    player.position.z = data.z;
+    // Position volontairement NON restaurée : voir startNewRun().
     cameraYaw = Number.isFinite(data.yaw) ? data.yaw : 0;
     cameraPitch = Number.isFinite(data.pitch)
       ? clampPitch(data.pitch)
@@ -931,6 +949,26 @@ function clampPitch(value) {
   return Math.min(CAMERA_PITCH_MAX, Math.max(CAMERA_PITCH_MIN, value));
 }
 
+/**
+ * Redémarre une run sur le monde courant : même seed, joueur ramené à
+ * l'origine, brume et sac remis à zéro.
+ */
+function startNewRun() {
+  clearWorld();
+
+  activeChunkKey = "";
+  player.position.set(1.5, 0, 1.5);
+  player.position.y = Math.max(terrainHeight(1.5, 1.5), -2.45);
+  cameraYaw = 0;
+  cameraPitch = 0.5;
+
+  refreshChunks(true);
+  snapCamera();
+  game.resetRun();
+  updateHud(true);
+  saveGame();
+}
+
 function startNewWorld() {
   clearWorld();
 
@@ -944,6 +982,7 @@ function startNewWorld() {
 
   refreshChunks(true);
   snapCamera();
+  game.resetRun();
   updateHud(true);
   saveGame();
 }
@@ -960,6 +999,7 @@ function resumeOrCreateWorld() {
   player.position.y = terrainHeight(player.position.x, player.position.z);
   refreshChunks(true);
   snapCamera();
+  game.resetRun();
   updateHud(true);
 }
 
@@ -1290,7 +1330,8 @@ function animate() {
 
   const magnitude = Math.hypot(localX, localZ);
   const moving = magnitude > 0.08;
-  const sprinting = running || keys.has("shift");
+  const wantsSprint = running || keys.has("shift");
+  const sprinting = wantsSprint && game.canSprint();
 
   if (moving) {
     if (magnitude > 1) {
@@ -1306,7 +1347,10 @@ function animate() {
     const moveX = rightX * localX + forwardX * -localZ;
     const moveZ = rightZ * localX + forwardZ * -localZ;
 
-    const speed = PLAYER_SPEED * (sprinting ? RUN_MULTIPLIER : 1);
+    // Le poids du sac et la collecte en cours pèsent sur la vitesse.
+    const speed = PLAYER_SPEED *
+      (sprinting ? RUN_MULTIPLIER : 1) *
+      game.speedFactor();
 
     player.position.x += moveX * speed * delta;
     player.position.z += moveZ * speed * delta;
@@ -1320,6 +1364,7 @@ function animate() {
   player.position.y = Math.max(ground, -2.45);
 
   animatePlayer(moving, sprinting, delta);
+  game.update(delta, moving, sprinting);
 
   // Étalement de la génération sur plusieurs images.
   processBuildQueue(2);
@@ -1365,6 +1410,8 @@ function animate() {
 
   updateAdaptiveResolution(delta);
 
+  if (updatePerf) updatePerf(delta);
+
   renderer.render(scene, camera);
 
   if (!firstFrameDone) {
@@ -1374,6 +1421,21 @@ function animate() {
     setTimeout(() => loading?.remove(), 700);
   }
 }
+
+// Le HUD hérité (biome, seed, chunks) est un outil de développement : il
+// encombre l'écran de jeu et n'apparaît qu'en mode debug.
+if (FOGTEST) document.body.classList.add("dev");
+
+// Interface de run, puis overlay de métriques sous ?fogtest ou ?diag.
+bindRunUI(game);
+
+const updatePerf = FOGTEST
+  ? bindPerfOverlay(renderer, () => ({
+      chunks: chunks.size,
+      objects: (() => { let n = 0; scene.traverse(() => n++); return n; })(),
+      resources: game.resourceCount
+    }))
+  : null;
 
 animate();
 
@@ -1629,6 +1691,31 @@ window.HORIZON = {
   },
 
   /** Cherche des coordonnées ou couleurs non finies dans toutes les géométries en scène. */
+  // --- Fog Nomad ---
+  get game() { return game.state; },
+  get config() { return game.config; },
+  get fogGap() { return game.fogGap; },
+  get resourceCount() { return game.resourceCount; },
+  get bagTier() { return game.bagTier(); },
+  get speedFactor() { return game.speedFactor(); },
+  get canSprint() { return game.canSprint(); },
+  get runs() { return game.storedRuns(); },
+  drop(type) { return game.dropOne(type); },
+  kill(cause = "test") { game.die(cause); },
+  restartRun() { game.restart(); },
+  setFogZ(z) { game.setFogZ(z); },
+  /** Rapproche la brume jusqu'à la marge voulue, pour tester sans attendre. */
+  setFogGap(gap) { game.setFogZ(player.position.z + gap); },
+  /** Ressources en scène avec leur type et leur écart latéral. */
+  get resourceSample() {
+    return game.resourceObjects.slice(0, 200).map((mesh) => ({
+      type: mesh.userData.resource.type,
+      x: mesh.userData.resource.worldX,
+      z: mesh.userData.resource.worldZ,
+      lateral: Math.abs(mesh.userData.resource.worldX)
+    }));
+  },
+
   scanNonFinite() {
     const bad = [];
 

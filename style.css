@@ -339,3 +339,271 @@ body.no-blur #actions button {
 }
 
 #diag button.wide { flex: 1 0 100%; }
+
+/* ------------------------------------------------------------------ */
+/* FOG NOMAD — interface de run                                        */
+/* ------------------------------------------------------------------ */
+
+#run-hud {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left));
+  top: calc(max(12px, env(safe-area-inset-top)) + 104px);
+  display: grid;
+  gap: 5px;
+  width: min(46vw, 190px);
+  pointer-events: none;
+}
+
+.gauge {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .1em;
+  color: rgba(255,255,255,.9);
+  text-shadow: 0 1px 3px rgba(0,0,0,.45);
+}
+
+.gauge-label { min-width: 46px; }
+
+.gauge-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(10, 18, 24, .5);
+  border: 1px solid rgba(255,255,255,.22);
+  overflow: hidden;
+}
+
+.gauge-track i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  transition: transform .12s linear, background-color .3s ease;
+}
+
+#health-fill { background: #6fd28a; }
+#stamina-fill { background: #79c6e8; }
+#weight-fill { background: #e0b062; }
+
+.gauge.low #health-fill { background: #e5654f; }
+.gauge.full #weight-fill { background: #d9704e; }
+
+#weight-value {
+  min-width: 30px;
+  text-align: right;
+  opacity: .85;
+  font-variant-numeric: tabular-nums;
+}
+
+#fog-gauge {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  padding: 8px 12px 7px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.2);
+  background: rgba(30, 24, 38, .5);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  text-align: center;
+  color: white;
+  pointer-events: none;
+  transition: background-color .3s ease, border-color .3s ease;
+}
+
+#fog-gauge strong {
+  display: block;
+  font-size: 19px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+#fog-gauge span {
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .16em;
+  opacity: .7;
+}
+
+#fog-gauge.warn {
+  background: rgba(120, 40, 40, .62);
+  border-color: rgba(255,150,150,.5);
+}
+
+#fog-gauge.danger {
+  background: rgba(170, 40, 40, .8);
+  border-color: rgba(255,190,190,.75);
+  animation: fogPulse .6s ease-in-out infinite alternate;
+}
+
+@keyframes fogPulse { to { transform: scale(1.06); } }
+
+#collect-ring {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 54px;
+  height: 54px;
+  margin: -27px 0 0 -27px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.35);
+  background: rgba(10,18,24,.3);
+  pointer-events: none;
+  overflow: hidden;
+}
+
+#collect-ring i {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 0%;
+  background: rgba(255,255,255,.75);
+}
+
+#bag-list {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(20px, calc(env(safe-area-inset-bottom) + 8px));
+  display: flex;
+  gap: 6px;
+  max-width: min(46vw, 260px);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.bag-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px 5px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.26);
+  background: rgba(18, 30, 37, .55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: white;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+
+.bag-chip .swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+}
+
+.bag-chip .kg { opacity: .6; font-weight: 600; }
+
+.bag-chip button {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.3);
+  background: rgba(220, 110, 80, .85);
+  color: white;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  touch-action: none;
+}
+
+#fog-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(ellipse at 50% 55%, rgba(0,0,0,0) 32%, rgba(43,35,51,.95) 100%);
+  transition: opacity .25s linear;
+}
+
+#death {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: white;
+  background: rgba(20, 16, 26, .9);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+#death h1 {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: .14em;
+}
+
+#death-cause {
+  margin: 0;
+  font-size: 12px;
+  opacity: .75;
+}
+
+#death-stats {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 4px 18px;
+  margin: 8px 0 4px;
+  font-size: 12px;
+  text-align: left;
+}
+
+#death-stats dt { opacity: .65; }
+#death-stats dd { margin: 0; font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
+
+#restart {
+  margin-top: 8px;
+  padding: 13px 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.3);
+  background: white;
+  color: #1a1522;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .14em;
+  touch-action: none;
+}
+
+#perf {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(96px, calc(env(safe-area-inset-bottom) + 84px));
+  padding: 6px 9px;
+  border-radius: 9px;
+  background: rgba(8, 14, 18, .82);
+  color: #d8f0ff;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 9px;
+  line-height: 1.45;
+  white-space: pre;
+  pointer-events: none;
+  z-index: 22;
+}
+
+@media (max-width: 430px) {
+  #run-hud { top: calc(max(12px, env(safe-area-inset-top)) + 98px); }
+}
+
+/* L'attribut `hidden` ne survit pas à un `display` explicite : on le rétablit. */
+[hidden] { display: none !important; }
+
+/* Le HUD de développement n'apparaît qu'avec ?fogtest ou ?diag. */
+#hud { display: none; }
+body.dev #hud { display: block; }
+
+/* Sans lui, les jauges de run reprennent le coin supérieur gauche. */
+body:not(.dev) #run-hud { top: max(12px, env(safe-area-inset-top)); }
+body:not(.dev) #intro { top: 26%; }
+body.dev #intro { top: 34%; }

@@ -1,10 +1,19 @@
-# Horizon Proto 0.2
+# Fog Nomad — Core Test 0.3
 
-Deuxième prototype mobile de **Horizon**, un petit monde 3D procédural qui est généré par morceaux autour du joueur.
+Prototype de jeu mobile bâti sur le moteur **Horizon 0.2**. Une brume mortelle
+descend derrière le joueur ; il faut avancer, ramasser ce qu'on peut porter, et
+jeter ce qui ralentit.
+
+- Règles, paramètres, architecture, tests et limites : **`FOG_NOMAD_CORE_TEST_0.3.md`**
+- Résultats de jeu réels : **`CORE_TEST_RESULTS.md`**
+- Audit technique du moteur : **`AUDIT_PERFORMANCE_BUGS_0.2.md`**
+
+Le moteur reste celui décrit ci-dessous : un petit monde 3D procédural généré
+par morceaux autour du joueur.
 
 Aucun backend, aucun compte, aucune API externe : le jeu est un site statique de quelques fichiers.
 
-## Contenu de la 0.2
+## Le moteur (Horizon 0.2)
 
 - direction artistique low-poly ;
 - palette et biomes distincts, **fondus entre eux** au lieu d'être découpés au chunk ;
@@ -72,16 +81,15 @@ C'est cet outil qui a permis d'isoler un artefact d'affichage impossible à repr
 | --- | --- | --- |
 | Se déplacer | joystick, moitié gauche | flèches, ZQSD/WASD |
 | Tourner / incliner la caméra | glisser sur la moitié droite | — |
-| Courir | bouton COURIR | Maj |
+| Courir (consomme du souffle) | bouton COURIR | Maj |
+| Ramasser | automatique à proximité | — |
+| Jeter un objet | croix sur la puce du sac | — |
 | Nouveau monde | bouton NOUVEAU | — |
 
-## Objectif de la prochaine version
+Les tests se lancent avec `node tests/fog03.mjs` — voir `tests/README.md`.
 
-La 0.3 ne devrait pas simplement ajouter plus de décor.
+## Suite
 
-Priorité suggérée :
-1. premier PNJ autonome ;
-2. besoins/états simples ;
-3. interaction joueur-PNJ ;
-4. persistance d'une modification apportée à un chunk ;
-5. premier objectif de jeu.
+Rien ne s'ajoute avant que le Core Test ait répondu à ses cinq questions dans
+`CORE_TEST_RESULTS.md`. Si le compromis central ne fonctionne pas, aucune
+fonctionnalité supplémentaire ne le fera fonctionner.
