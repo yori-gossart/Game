@@ -29,13 +29,13 @@ Seuls 5 × 5 chunks autour du joueur sont gardés en scène, soit 25 chunks. Lor
 
 Trois choix portent l'essentiel du budget :
 
-- **InstancedMesh par chunk.** Troncs, houppiers, rochers et fleurs d'un même chunk tiennent chacun en un seul appel de rendu. Un chunk coûte 5 objets de scène quel que soit le nombre d'arbres.
-- **Matériaux et géométries mutualisés.** Un seul matériau de terrain (la couleur de biome passe par les couleurs de sommets), un seul matériau de feuillage (la teinte passe par la couleur d'instance). Les géométries d'arbre, de rocher et de fleur sont créées une fois pour tout le jeu.
+- **InstancedMesh par chunk.** Troncs, houppiers et rochers d'un même chunk tiennent chacun en un seul appel de rendu, quel que soit leur nombre. Les fleurs, elles, sont **fusionnées** en une géométrie unique par chunk : leur `InstancedMesh` corrompait le rendu sur certains GPU mobiles (voir `AUDIT_PERFORMANCE_BUGS_0.2.md`, B0). Un chunk coûte donc au plus 5 objets de scène.
+- **Matériaux et géométries mutualisés.** Un seul matériau de terrain (la couleur de biome passe par les couleurs de sommets), un seul matériau de feuillage (la teinte passe par la couleur d'instance). Les géométries d'arbre et de rocher sont créées une fois pour tout le jeu ; celle de la fleur sert de patron recopié dans la géométrie fusionnée de chaque chunk.
 - **Génération étalée.** Franchir une frontière de chunk demande jusqu'à 5 nouveaux chunks ; ils sont construits deux par image via une file d'attente, ce qui évite l'à-coup.
 
 Ordre de grandeur mesuré en exploration, sur un rendu 412 × 915 : **20 à 35 appels de rendu, 3 000 à 7 000 triangles, aucune texture, 5 programmes de shader**.
 
-Si les FPS descendent sous 38, la densité de pixels est abaissée par paliers (1.35 → 1.15 → 1.0 → 0.85) avant toute réduction de la qualité visuelle ; elle remonte d'elle-même quand la marge revient.
+Si les FPS descendent sous 38, la densité de pixels est abaissée par paliers (1.35 → 1.15 → 1.0) avant toute réduction de la qualité visuelle ; elle remonte d'elle-même au-delà de 52 FPS. Le plancher est un pixel CSS : descendre en dessous rendait l'image visiblement en escalier sur les écrans à forte densité.
 
 ## Distance de vue et brouillard
 
@@ -56,7 +56,15 @@ Il est directement adapté à un hébergement statique Vercel : aucune étape de
 
 ### Sonde de diagnostic
 
-Une fois la page chargée, `window.HORIZON` expose l'état courant depuis la console : `chunks`, `discovered`, `seed`, `pos`, `yaw`, `pitch`, `biome`, `queued`, `instances`, `info` (appels de rendu, triangles, géométries) et `objectsInScene`. Les méthodes `move(x, y)`, `setRun(bool)` et `setYaw(v)` permettent de piloter le personnage sans les doigts, pour les tests automatisés.
+Une fois la page chargée, `window.HORIZON` expose l'état courant depuis la console : `chunks`, `discovered`, `seed`, `pos`, `yaw`, `pitch`, `biome`, `queued`, `instances`, `kindVisibility`, `info` (appels de rendu, triangles, géométries), `objectsInScene`, `camPos`, `heapMB`, `depthBits` (capacités réelles du contexte WebGL) et `chunkKeys`.
+
+Pour piloter sans les doigts : `move(x, y)`, `setRun(bool)`, `setYaw(v)`, `setPitch(v)`, `teleport(x, z)`, `setSeed(seed, x, z)`, `newWorld()`. Pour contrôler : `scanNonFinite()` cherche des NaN/Infinity dans toutes les géométries et matrices d'instance, `speckle()` mesure la proportion de pixels voisins discordants, `terrainAt(x, z)` donne l'altitude du terrain.
+
+### Mode diagnostic
+
+Ajouter `?diag` à l'URL affiche un bandeau donnant les capacités réelles du GPU (bits de profondeur, MSAA, précision, densité de pixels, nom du chipset) et permet de retirer une famille d'objets à la fois — terrain, troncs, houppiers, rochers, fleurs, eau, soleil — plus l'éclairage et le flou d'arrière-plan de l'interface. Un bouton fait aussi défiler trois rendus de fleurs (fusionné, instancié, un objet par fleur).
+
+C'est cet outil qui a permis d'isoler un artefact d'affichage impossible à reproduire hors de l'appareil concerné. Sans le paramètre `?diag`, rien de tout cela n'est construit.
 
 ## Commandes
 

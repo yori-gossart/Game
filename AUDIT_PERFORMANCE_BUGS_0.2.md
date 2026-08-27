@@ -12,7 +12,9 @@ Cette différence avec la cible est déterminante et conditionne la lecture de t
 
 L'audit ne trouve **aucune fuite mémoire**, **aucune corruption de terrain**, **aucune valeur non finie**, **aucun trou ni recouvrement de chunk**, et **aucune erreur console**. La gestion des chunks est correcte, y compris en coordonnées négatives et sous sollicitation extrême (300 sauts de chunk enchaînés). 26 vérifications automatisées passent avant comme après correction.
 
-> **Mise à jour — cause trouvée.** Ce résumé a d'abord conclu à une cause non identifiée. Le mode diagnostic embarqué (`?diag`) a ensuite permis à l'utilisateur de désigner les **fleurs** sur l'appareil, et l'inspection des agencements d'attributs a livré la cause exacte : voir **B0** ci-dessous. Les quatre défauts décrits plus bas restent des défauts réels et corrigés, mais **aucun n'était la cause de l'artefact noir**. Je laisse le raisonnement initial intact : il documente une piste plausible, mesurée, et fausse.
+> **Mise à jour — cause trouvée et corrigée, confirmée sur l'appareil.** L'artefact venait de l'**`InstancedMesh` des fleurs**. Il est corrigé : les fleurs d'un chunk sont désormais fusionnées en une seule géométrie non instanciée. L'utilisateur confirme la disparition des flashs. Voir **B0**.
+>
+> Ce résumé a d'abord conclu à une cause non identifiée, puis a désigné à tort un attribut `uv` superflu. Les deux versions étaient fausses. Les quatre défauts décrits plus bas restent réels et corrigés, mais **aucun n'était la cause de l'artefact**. Le raisonnement initial est laissé intact : il documente des pistes mesurées et fausses, ce qui fait partie du compte rendu.
 
 Le sujet principal — la bande horizontale noire/jaune observée sur téléphone — **n'a pas pu être reproduite** dans cet environnement. Je l'écris sans détour : la cause n'est pas *démontrée*. En revanche, l'audit a identifié et mesuré **quatre défauts structurels réels** qui, réunis, expliquent le symptôme décrit, et dont trois dépendent exactement des paramètres matériels que cet environnement ne reproduit pas :
 
@@ -29,36 +31,35 @@ Deux bugs secondaires ont été trouvés et corrigés au passage, dont un franc 
 
 ## 2. Bugs trouvés
 
-### B0 — Artefact noir : attribut `uv` inutile sur une géométrie instanciée colorée · **P0 — cause réelle**
+### B0 — Artefact noir : `InstancedMesh` des fleurs · **P0 — cause réelle, corrigée**
 
-**Symptôme.** Grands polygones noirs opaques à arêtes rectilignes, apparaissant et disparaissant plusieurs dizaines de fois par seconde pendant le déplacement, à des endroits précis du monde.
+**Symptôme.** Grands polygones noirs opaques à arêtes rectilignes, apparaissant et disparaissant plusieurs dizaines de fois par seconde pendant le déplacement. Observé sur Android, jamais en test.
 
-**Ce que les captures ont établi.** Les formes sont pleines, opaques, à arêtes franches — pas un moucheté entrelacé, donc **pas du z-fighting**. Indice décisif : les éléments d'interface portant un `backdrop-filter` virent au noir **uniquement là où la forme passe derrière eux** (image 1 : HUD noir, forme en haut ; image 2 : HUD normal, joystick et bouton noirs, forme en bas), texte blanc intact. Le noir est donc de la géométrie 3D, et l'interface ne fait que le flouter.
+**Ce que les captures ont établi.** Formes pleines, opaques, à arêtes franches — pas un moucheté entrelacé, donc **pas du z-fighting**. Indice décisif : les éléments d'interface portant un `backdrop-filter` virent au noir **uniquement là où la forme passe derrière eux** (une capture montre le HUD noir avec la forme en haut ; une autre, le HUD normal et le joystick noir avec la forme en bas), texte blanc intact. Le noir était donc de la géométrie 3D, l'interface ne faisant que la flouter.
 
-**Reproduction côté données : négative.** Sur la seed 423135 aux quatre positions relevées, puis sur 200 emplacements de la même seed : 0 instance à couleur nulle, 0 échelle ou position aberrante, 0 valeur non finie. Les tampons JavaScript sont sains.
+**Reproduction : impossible dans cet environnement.** Sur la seed 423135 aux quatre positions relevées, puis sur 200 emplacements de la même seed : 0 instance à couleur nulle, 0 échelle ou position aberrante, 0 valeur non finie, 0 normale dégénérée, 0 triangle d'aire nulle. Les données côté JavaScript étaient saines de bout en bout. La corruption se produisait côté pilote, hors de portée d'un rasteriseur logiciel.
 
-**Isolation sur l'appareil.** Le mode diagnostic `?diag` retire une famille d'objets à la fois. Couper les **fleurs** fait disparaître l'artefact.
+**Isolation sur l'appareil.** Faute de pouvoir reproduire, un mode diagnostic (`?diag`) a été livré à l'utilisateur : il retire une famille d'objets à la fois. Couper les **fleurs** supprimait l'artefact.
 
-**Cause.** L'inspection des agencements d'attributs révèle ce que les fleurs avaient d'unique :
+Un second tour a fait défiler cinq variantes de rendu des fleurs, chacune ne modifiant **qu'une seule propriété** :
 
-| type | attributs de géométrie | couleur d'instance | emplacements |
-| --- | --- | --- | --- |
-| troncs | position + normal + uv | non | 7 |
-| houppiers | position + normal | **oui** | 7 |
-| rochers | position + normal + uv | non | 7 |
-| **fleurs** | position + normal + **uv** | **oui** | **8** |
+| variante | ce qu'elle change | résultat sur l'appareil |
+| --- | --- | --- |
+| 0 actuel | référence : instancié, couleur d'instance, sphère | artefact |
+| 1 sans couleur d'instance | un maillage par teinte | artefact |
+| 2 tétraèdre | géométrie 12 sommets, sans pôles | artefact |
+| 3 sans instanciation | un objet ordinaire par fleur | **plus d'artefact** |
+| 4 taille ×3 | fleurs non sous-pixel | artefact |
 
-Les fleurs étaient le seul dessin à cumuler un attribut `uv` **et** une couleur d'instance : huit emplacements d'attributs de sommet contre sept partout ailleurs (position, normale, uv, les quatre vecteurs de la matrice d'instance, la couleur). Le symptôme rapporté — polygone à la fois **géant** et **noir** — correspond exactement à une matrice d'instance et une couleur lues au mauvais emplacement.
+**Cause.** L'`InstancedMesh` des fleurs, et lui seul. Ni la couleur d'instance, ni la géométrie, ni la taille n'y sont pour quelque chose : seule la suppression de l'instanciation y met fin. Les troncs, houppiers et rochers restent instanciés et n'ont jamais posé problème — ce qui rend le mécanisme sous-jacent d'autant plus opaque.
 
-Cet `uv` n'était lu par personne : aucun matériau du projet n'est texturé, l'audit mesure `textures = 0`. C'était un attribut mort qui coûtait un emplacement.
+**Correction.** La variante 3 n'a pas été livrée telle quelle : un objet et un appel de rendu par fleur, soit jusqu'à ~126 appels supplémentaires, aurait échangé un défaut d'affichage contre un problème de performance. À la place, les fleurs d'un chunk sont **fusionnées en une seule géométrie** (`buildFlowerPatch`) : sommets écrits à leur position finale, teinte portée par les couleurs de sommets. Un appel de rendu par chunk, aucune instanciation, et exactement le même chemin de rendu que le terrain — qui fonctionne sur l'appareil. La géométrie fusionnée est propre au chunk et libérée avec lui.
 
-**Correction.** `faceted()` supprime désormais `uv` (et `uv1`) sur toutes les géométries. Les quatre types partagent l'agencement `position + normal`, et les fleurs deviennent structurellement identiques aux houppiers, qui fonctionnaient.
+**Validation.** `instancie: false` ; attributs `position+normal+color`, identiques au terrain ; les trois teintes préservées ; géométries GPU stables sur 100 chunks (17 → 16) ; objets de scène en baisse (146 → 128) ; 32/32 et 26/26 au vert ; aucune erreur console. **Et surtout : disparition des flashs confirmée par l'utilisateur sur l'appareil.**
 
-**Validation.** Agencements vérifiés identiques ; terrain conservant bien son attribut `color` (`position+normal+color` — sans lui il rendrait noir) ; couleurs des fleurs intactes ; 32/32 et 26/26 au vert ; aucune erreur console.
+**Ce qui reste inexpliqué.** *Pourquoi* l'instanciation des fleurs se corrompt sur ce GPU alors que celle des arbres et des rochers tient. Cinq hypothèses vérifiables ont été formulées et éliminées : précision du depth buffer, coplanarité eau/terrain, dérivées de `flatShading`, attribut `uv` superflu, normales dégénérées. Aucune n'était la bonne. La correction est validée par le comportement observé sur le matériel, **pas par un mécanisme démontré**, et ce document ne prétend pas le contraire.
 
-**Limite assumée.** Le mécanisme précis côté pilote n'est pas prouvable depuis un environnement de rendu logiciel. La corrélation est en revanche exacte — le seul objet au layout distinct est le seul à se corrompre — et la correction est justifiée indépendamment, puisqu'elle supprime un attribut mort.
-
-**Ce que cet épisode enseigne.** Trois hypothèses successives (précision de profondeur, coplanarité eau/terrain, dérivées de `flatShading`) étaient mesurables, plausibles, et fausses. C'est l'instrumentation embarquée qui a tranché, pas le raisonnement. Face à un artefact spécifique à un appareil, livrer un outil de bissection à l'utilisateur vaut mieux que multiplier les hypothèses à distance.
+**Ce que cet épisode enseigne.** Cinq hypothèses successives, toutes mesurables et argumentées, toutes fausses. Ce n'est pas le raisonnement à distance qui a résolu le bug, c'est la bissection sur le matériel qui reproduit. Pour un artefact spécifique à un appareil, livrer un outil de bissection à l'utilisateur vaut mieux que d'accumuler les théories — et il faut le faire tôt, pas en dernier recours.
 
 ---
 
@@ -336,7 +337,7 @@ Ressources échantillonnées au démarrage puis après 10, 25, 50 et 100 chunks 
 
 ## 10. Risques encore présents
 
-1. **Le bug noir/jaune n'est pas reproduit, donc pas formellement démontré.** Les quatre causes structurelles corrigées expliquent le symptôme et trois d'entre elles dépendent de paramètres matériels absents ici (16 bits, mediump, DPR élevé). Seule une observation sur l'appareil peut confirmer. **Si la bande persiste**, l'élément suivant à instrumenter est la valeur réelle de `DEPTH_BITS` sur le téléphone : `HORIZON.depthBits` la renvoie depuis la console.
+1. **L'artefact noir est corrigé et confirmé sur l'appareil, mais son mécanisme reste inexpliqué** (voir B0). L'instanciation reste utilisée pour les troncs, houppiers et rochers, sans incident constaté — mais rien ne garantit qu'un autre GPU ne présentera pas le même défaut sur ces objets-là. Si cela arrivait, le mode `?diag` permet de l'isoler en quelques secondes, et la fusion par chunk employée pour les fleurs est directement transposable.
 2. **Aucune mesure de FPS sur GPU réel.** Tous les chiffres viennent d'un rasteriseur logiciel et ne transposent pas. La performance mobile est **NON MESURABLE** ici.
 3. **Multi-touch réel non testé.** Les contrôles sont validés par événements pointer synthétiques ; joystick et caméra simultanés sur un vrai écran restent à confirmer.
 4. **Perte de contexte WebGL non testée**, et non gérée dans le code : aucun `webglcontextlost`/`restored`. Sur mise en veille prolongée ou pression mémoire, la page resterait figée. Risque réel, non corrigé (hors périmètre : c'est un ajout, pas un correctif).
