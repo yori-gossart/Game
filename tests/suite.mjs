@@ -1,7 +1,9 @@
 import { chromium, devices, CHROME, GL_ARGS } from "./_pw.mjs";
 
 const URL = "http://127.0.0.1:8123/index.html";
-const OUT = process.env.SHOT_DIR || ".";
+import { mkdirSync } from "node:fs";
+const OUT = process.env.SHOT_DIR || "./.shots";
+mkdirSync(OUT, { recursive: true });
 const TAG = process.argv[2] || "run";
 
 const browser = await chromium.launch({

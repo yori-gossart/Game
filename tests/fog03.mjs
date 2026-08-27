@@ -1,5 +1,7 @@
 import { chromium, devices, CHROME, GL_ARGS } from "./_pw.mjs";
-const OUT = process.env.SHOT_DIR || ".";
+import { mkdirSync } from "node:fs";
+const OUT = process.env.SHOT_DIR || "./.shots";
+mkdirSync(OUT, { recursive: true });
 const URL = process.env.URL || "http://127.0.0.1:8123/index.html";
 
 const b = await chromium.launch({ executablePath: CHROME,

@@ -1,3 +1,5 @@
 node_modules/
 .vercel/
 .DS_Store
+# Captures produites par les suites de test (SHOT_DIR par défaut = .)
+.shots/
