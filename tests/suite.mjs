@@ -242,7 +242,12 @@ check("save: world regenerated identically (seed drives terrain)",
 globalThis.__detPts = det.pts;
 
 // ---- 10. new world button ----
+// Depuis la 0.5, NOUVEAU est un outil de développement : il ne s'affiche
+// qu'en mode dev (?fogtest / ?diag), parce qu'un joueur qui fuit une brume
+// n'a rien à faire d'un bouton qui régénère le monde. Le comportement, lui,
+// doit rester vérifié — on active donc le mode dev pour le tester.
 const seedBefore = restored.seed;
+await page.evaluate(() => document.body.classList.add("dev"));
 await page.click("#new-world");
 await page.waitForTimeout(800);
 const afterNew = await page.evaluate(() => ({ seed: window.HORIZON.seed, pos: window.HORIZON.pos,

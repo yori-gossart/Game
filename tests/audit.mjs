@@ -94,8 +94,24 @@ for (const target of [10, 25, 50, 100]) {
   console.log(`${String(target).padStart(3)} chunks  chunks=${s.chunks} geo=${s.info.geometries} objs=${s.objs} `
     + `calls=${s.info.calls} tris=${s.info.tris} disc=${s.disc} heap=${s.heap?s.heap.used+"MB":"n/a"}`);
 }
-const geoStart = s0.info.geometries, geoEnd = marks[100].info.geometries;
-ok("P4: géométries GPU stables après 100 chunks", geoEnd <= geoStart + 6,
+// `renderer.info.memory.geometries` ne compte une géométrie qu'une fois ses
+// tampons GPU créés, c'est-à-dire à son premier rendu. Les géométries
+// PARTAGÉES de la 0.5 — quatre familles de végétation, cinq structures
+// narratives — n'apparaissent donc au compteur qu'au moment où le joueur
+// croise le premier exemplaire de chaque. Cette montée-là est bornée par le
+// nombre de types, pas par la distance parcourue.
+//
+// Comparer départ et 100 chunks confond ce chargement paresseux avec une
+// fuite. On parcourt donc 100 chunks DE PLUS : une fuite continue de croître,
+// un chargement paresseux, non.
+await travelChunks(100);
+const apresSecondTour = await snap();
+console.log(`200 chunks  chunks=${apresSecondTour.chunks} geo=${apresSecondTour.info.geometries} `
+  + `objs=${apresSecondTour.objs} heap=${apresSecondTour.heap?apresSecondTour.heap.used+"MB":"n/a"}`);
+
+const geoStart = marks[100].info.geometries;
+const geoEnd = apresSecondTour.info.geometries;
+ok("P4: géométries GPU stables du 100e au 200e chunk", geoEnd <= geoStart + 6,
    `${geoStart} -> ${geoEnd}`);
 ok("P4: objets de scène stables", marks[100].objs <= s0.objs * 1.4 + 10, `${s0.objs} -> ${marks[100].objs}`);
 ok("P4: chunks actifs bornés à 25", marks[100].chunks <= 25, `${marks[100].chunks}`);
@@ -131,7 +147,10 @@ const rapid = await p.evaluate(async () => {
 });
 await p.waitForTimeout(1200);
 const rapidAfter = await snap();
-ok("D: pas d'explosion de géométries sous 300 sauts", rapidAfter.info.geometries <= geoStart + 6,
+// Référence : le compteur JUSTE AVANT les sauts. Le comparer au départ de la
+// session mesurait aussi le chargement paresseux des géométries partagées.
+ok("D: pas d'explosion de géométries sous 300 sauts",
+   rapidAfter.info.geometries <= rapid.before + 8,
    `${rapid.before} -> ${rapidAfter.info.geometries}`);
 ok("D: 25 chunks après stabilisation", rapidAfter.chunks === 25, `${rapidAfter.chunks}`);
 

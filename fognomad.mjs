@@ -164,7 +164,13 @@ export const CONFIG = {
     // 26 unités, un cristal achète environ six secondes de survie à la
     // pression de mi-partie — il sauve une situation, il ne l'installe pas.
     pushDistance: 26,       // unités de marge regagnées
-    flashDuration: 0.75
+    flashDuration: 0.75,
+    waveRadius: 26,         // portée de l'onde visible, en unités
+    waveDuration: 0.9,      // secondes
+    // Pulsation lente du cristal posé au sol : un point qui respire se repère
+    // de loin, là où un objet fixe se confond avec un caillou.
+    pulseSpeed: 2.1,
+    pulseAmount: 0.42
   },
 
   // Feu de répit : une seule recette, un seul bouton.
@@ -303,7 +309,8 @@ export function createFogNomad(ctx) {
       color: CONFIG.resources[key].color,
       // Le cristal s'auto-éclaire : c'est ce qui le rend repérable à distance,
       // sans lumière ponctuelle ni post-traitement.
-      emissive: key === "cristal" ? 0x2f8f80 : 0x000000
+      emissive: key === "cristal" ? 0x2f8f80 : 0x000000,
+      emissiveIntensity: 1
     });
   }
 
@@ -995,13 +1002,71 @@ export function createFogNomad(ctx) {
     state.fogZ += CONFIG.crystal.pushDistance;
     state.pulses++;
     state.flashUntil = state.elapsed + CONFIG.crystal.flashDuration;
+
+    // L'onde repart de zéro même si deux cristaux s'enchaînent.
+    ondeT = 0;
+    onde.visible = true;
+    onde.scale.setScalar(1.5);
+
     updateBagVisual();
     emit();
     return true;
   }
 
+  // Onde de cristal : un anneau plat qui part du joueur, s'élargit et
+  // s'efface. Un seul objet réutilisé, invisible au repos — le joueur doit
+  // VOIR la brume être repoussée, pas seulement lire un compteur qui remonte.
+  const onde = (() => {
+    const geometry = new THREE.RingGeometry(0.86, 1, 40);
+    geometry.rotateX(-Math.PI / 2);
+    geometry.deleteAttribute("uv");
+
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x9df3e6,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      fog: false,
+      forceSinglePass: true
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.visible = false;
+    mesh.renderOrder = 7;
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    return mesh;
+  })();
+
+  let ondeT = 0;
+
+  function updateOnde(delta) {
+    if (!onde.visible) return;
+
+    ondeT += delta;
+    const duree = CONFIG.crystal.waveDuration;
+    const t = ondeT / duree;
+
+    if (t >= 1) { onde.visible = false; return; }
+
+    // Départ vif puis ralentissement : une onde qui décélère se lit mieux
+    // qu'une expansion linéaire.
+    const rayon = 1.5 + Math.pow(t, 0.55) * CONFIG.crystal.waveRadius;
+    onde.scale.setScalar(rayon);
+    onde.position.set(player.position.x, player.position.y + 0.35, player.position.z);
+    onde.material.opacity = (1 - t) * 0.85;
+  }
+
   /** Les cristaux tournent lentement : un point mouvant se repère de loin. */
   function spinCrystals(delta) {
+    // Le cristal tourne ET respire : son auto-éclairage monte et descend
+    // lentement. Cela le distingue d'un rocher à trente unités, ce qui est
+    // exactement la distance à laquelle il faut décider du détour.
+    const pulse = 1 + Math.sin(state.elapsed * CONFIG.crystal.pulseSpeed) *
+                      CONFIG.crystal.pulseAmount;
+    resourceMaterials.cristal.emissiveIntensity = pulse;
+
     for (const mesh of activeResources) {
       if (mesh.userData.resource.type === "cristal") mesh.rotation.y += delta * 0.9;
     }
@@ -1183,6 +1248,7 @@ export function createFogNomad(ctx) {
     updateBagVisual();
 
     spinCrystals(delta);
+    updateOnde(delta);
     updateCollection(delta);
     emit();
   }

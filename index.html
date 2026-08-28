@@ -4,11 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no" />
   <meta name="theme-color" content="#8bc6df" />
-  <meta name="description" content="Fog Nomad 0.4 — fuir une brume mortelle, ramasser ce qu'on peut porter, jeter ce qui ralentit." />
+  <meta name="description" content="Fog Nomad 0.5 — fuir une brume mortelle dans un monde qui meurt derrière soi." />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Fog Nomad — Vertical Slice 0.4</title>
+  <title>Fog Nomad — Identity &amp; Tension 0.5</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%238bc6df'/%3E%3Ccircle cx='44' cy='19' r='8' fill='%23ffe9ac'/%3E%3Cpath d='M0 44 L18 30 L34 44 L48 34 L64 45 L64 64 L0 64 Z' fill='%2374a45d'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="./style.css" />
 </head>
@@ -17,7 +17,7 @@
     <canvas id="world" aria-label="Monde 3D procédural Horizon"></canvas>
 
     <section id="hud" aria-live="polite">
-      <div class="brand">HORIZON <span>0.2</span></div>
+      <div class="brand">FOG NOMAD <span>0.5</span></div>
       <div id="biome">Prairie</div>
       <div id="coordinates">X 0 · Z 0</div>
       <div id="chunk-count">25 chunks actifs</div>
@@ -87,7 +87,8 @@
         <span>✦</span>
         COURIR
       </button>
-      <button id="new-world" type="button">NOUVEAU</button>
+      <!-- Outil de développement : masqué hors ?fogtest / ?diag. -->
+      <button id="new-world" type="button" class="dev-only">NOUVEAU</button>
     </div>
 
     <div id="loading">

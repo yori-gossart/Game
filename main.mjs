@@ -212,6 +212,13 @@ let idleTime = 0;
 // run ni du joueur (balises, respiration de la brume).
 let elapsedTotal = 0;
 
+// Ambiance de danger : distance à partir de laquelle la bascule commence.
+const DANGER_DISTANCE = 95;
+const FOG_TINT_SAFE = new THREE.Color(FOG_COLOR);
+const FOG_TINT_DANGER = new THREE.Color(0x4a3c58);
+const SUN_INTENSITY = sunLight.intensity;
+const HEMI_INTENSITY = hemiLight.intensity;
+
 const CAMERA_PITCH_MIN = 0.12;
 const CAMERA_PITCH_MAX = 0.98;
 
@@ -287,11 +294,12 @@ const biomeTreeColors = BIOMES.map((biome) => new THREE.Color(biome.tree));
 // chunk se recrée. Trois instructions dans le fragment shader.
 const contamination = {
   fogZ: { value: 1e9 },
-  // Distance sur laquelle la décoloration s'installe avant le mur. Volontairement
-  // plus courte que la portée de vue (62 u) : le monde proche reste vivant et
-  // coloré, seule la bande qui va être avalée se décolore. Une portée plus
-  // large éteignait toute l'image et supprimait le contraste recherché.
-  range: { value: 46 },
+  // Distance sur laquelle la décoloration s'installe avant le mur. Calée sur
+  // la portée de vue : le monde proche reste vivant et coloré, seule la bande
+  // qui va être avalée se décolore. Plus court, la bande mourante était
+  // masquée par le brouillard atmosphérique, qui éclaircit précisément là où
+  // la contamination assombrit — les deux effets se neutralisaient.
+  range: { value: 62 },
   // Vers quoi le monde tend : un gris-prune froid et désaturé.
   color: { value: new THREE.Color(0x4a4658) }
 };
@@ -2334,6 +2342,21 @@ function animate() {
 
   // Une seule écriture par image, partagée par tous les matériaux du monde.
   contamination.fogZ.value = game.state.fogZ;
+
+  // --- ambiance de danger ---------------------------------------------------
+  // La tension doit se sentir AVANT de regarder le compteur. Trois choses
+  // basculent ensemble à mesure que la brume approche : le brouillard
+  // atmosphérique se teinte de prune, le ciel s'assombrit, et la lumière
+  // du soleil faiblit. Aucun de ces effets ne rend l'image illisible : ils
+  // saturent tous à 70 % de leur amplitude.
+  const marge = game.fogGap;
+  const proche = 1 - Math.min(1, Math.max(0, (marge - 8) / DANGER_DISTANCE));
+  const t = proche * proche * 0.7;
+
+  scene.fog.color.copy(FOG_TINT_SAFE).lerp(FOG_TINT_DANGER, t);
+  skyDome.material.color.setRGB(1 - t * 0.55, 1 - t * 0.62, 1 - t * 0.5);
+  sunLight.intensity = SUN_INTENSITY * (1 - t * 0.5);
+  hemiLight.intensity = HEMI_INTENSITY * (1 - t * 0.35);
 
   // Les balises tournent lentement et respirent : c'est le seul mouvement
   // artificiel du monde, et la seule chose qui a l'air encore alimentée.

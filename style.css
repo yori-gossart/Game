@@ -604,6 +604,12 @@ body.no-blur #actions button {
 #hud { display: none; }
 body.dev #hud { display: block; }
 
+/* Outils de développement : présents dans le DOM, invisibles en jeu normal.
+   Le bouton NOUVEAU régénère le monde — utile pour tester, hors sujet pour
+   un joueur qui fuit une brume. */
+.dev-only { display: none !important; }
+body.dev .dev-only { display: flex !important; }
+
 /* Sans lui, les jauges de run reprennent le coin supérieur gauche. */
 body:not(.dev) #run-hud { top: max(12px, env(safe-area-inset-top)); }
 body:not(.dev) #intro { top: 26%; }
