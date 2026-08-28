@@ -464,16 +464,17 @@ body.no-blur #actions button {
   background: rgba(255,255,255,.75);
 }
 
+/* Au-dessus du joystick plutôt qu'au centre : sur écran étroit, la bande
+   centrale libre entre joystick et actions ne fait que ~130 px. */
 #bag-list {
   position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: max(20px, calc(env(safe-area-inset-bottom) + 8px));
+  left: max(16px, env(safe-area-inset-left));
+  bottom: max(152px, calc(env(safe-area-inset-bottom) + 140px));
   display: flex;
   gap: 6px;
-  max-width: min(46vw, 260px);
+  max-width: min(56vw, 250px);
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .bag-chip {
@@ -607,3 +608,92 @@ body.dev #hud { display: block; }
 body:not(.dev) #run-hud { top: max(12px, env(safe-area-inset-top)); }
 body:not(.dev) #intro { top: 26%; }
 body.dev #intro { top: 34%; }
+
+/* ------------------------------------------------------------------ */
+/* 0.4 — actions contextuelles, retours, flash                         */
+/* ------------------------------------------------------------------ */
+
+#powers {
+  position: absolute;
+  right: max(18px, env(safe-area-inset-right));
+  /* #actions (COURIR 76 + espace 11 + NOUVEAU 50) monte jusqu'à ~164 px :
+     les actions contextuelles se placent franchement au-dessus. */
+  bottom: max(180px, calc(env(safe-area-inset-bottom) + 168px));
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+#powers button {
+  display: grid;
+  place-items: center;
+  gap: 1px;
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.34);
+  color: white;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  touch-action: none;
+  animation: powerIn .22s ease-out;
+}
+
+#powers .glyph { font-size: 19px; line-height: 1; }
+
+@keyframes powerIn { from { transform: scale(.7); opacity: 0; } }
+
+#use-crystal { background: rgba(30, 96, 92, .82); box-shadow: 0 0 16px rgba(99, 232, 214, .4); }
+#light-fire  { background: rgba(104, 58, 28, .84); box-shadow: 0 0 14px rgba(255, 176, 87, .32); }
+#powers button:active { transform: scale(.93); }
+
+#pickup-feed {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  pointer-events: none;
+}
+
+.pickup {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(12, 20, 26, .6);
+  color: white;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  animation: pickupRise 1s ease-out forwards;
+}
+
+@keyframes pickupRise {
+  0%   { opacity: 0; transform: translateY(6px) scale(.9); }
+  18%  { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-22px); }
+}
+
+#pulse-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(circle at 50% 58%, rgba(150,255,238,.75) 0%, rgba(99,232,214,.28) 34%, rgba(99,232,214,0) 68%);
+}
+
+#pulse-flash.on { animation: pulseFlash .75s ease-out; }
+
+@keyframes pulseFlash {
+  0%   { opacity: 0; transform: scale(.55); }
+  22%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.5); }
+}
+
+/* Un feu allumé : la jauge de brume signale le répit. */
+#fog-gauge.sheltered {
+  background: rgba(104, 58, 28, .68);
+  border-color: rgba(255, 176, 87, .55);
+}

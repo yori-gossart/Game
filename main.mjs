@@ -36,10 +36,52 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
 
 const SKY_COLOR = 0x8bc6df;
-const FOG_COLOR = 0x9cc5cd;
+const FOG_COLOR = 0xb4cdd4;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(SKY_COLOR);
+
+// Ciel : une demi-sphère retournée dont le dégradé passe par les couleurs de
+// sommets. Un seul appel de rendu, aucune texture, aucun shader — et l'horizon
+// cesse d'être un aplat uniforme.
+const SKY_TOP = new THREE.Color(0x4d86b8);
+const SKY_HORIZON = new THREE.Color(0xbcd4d8);
+
+const skyDome = (() => {
+  const geometry = new THREE.SphereGeometry(1, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.55);
+  const position = geometry.attributes.position;
+  const colors = new Float32Array(position.count * 3);
+  const tint = new THREE.Color();
+
+  for (let i = 0; i < position.count; i++) {
+    // 0 à l'horizon, 1 au zénith, avec une transition resserrée vers le bas.
+    const t = Math.pow(Math.max(0, position.getY(i)), 0.62);
+    tint.copy(SKY_HORIZON).lerp(SKY_TOP, t);
+    colors[i * 3] = tint.r;
+    colors[i * 3 + 1] = tint.g;
+    colors[i * 3 + 2] = tint.b;
+  }
+
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geometry.deleteAttribute("uv");
+  geometry.deleteAttribute("normal");
+
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      side: THREE.BackSide,
+      fog: false,
+      depthWrite: false
+    })
+  );
+
+  mesh.renderOrder = -1;
+  mesh.frustumCulled = false;
+  return mesh;
+})();
+
+scene.add(skyDome);
 
 const CHUNK_SIZE = 32;
 const CHUNK_RADIUS = 2;
@@ -334,7 +376,14 @@ const game = createFogNomad({
   player,
   renderer,
   terrainHeight,
-  onRestart: () => startNewRun()
+  onRestart: () => startNewRun(),
+  // Le chunk qui contient une position : sert à rattacher un objet jeté ou un
+  // feu, pour qu'ils disparaissent avec lui.
+  chunkAt: (x, z) => {
+    const key = `${Math.floor(x / CHUNK_SIZE)},${Math.floor(z / CHUNK_SIZE)}`;
+    const group = chunks.get(key);
+    return group ? { key, group } : null;
+  }
 });
 
 const keys = new Set();
@@ -347,42 +396,69 @@ function createPlayer() {
   const hair = new THREE.MeshLambertMaterial({ color: 0x3d2d27 });
   const bagMat = new THREE.MeshLambertMaterial({ color: 0x8a5f36 });
 
-  const body = new THREE.Mesh(faceted(new THREE.CapsuleGeometry(0.38, 0.72, 4, 8)), blue);
-  body.position.y = 1.15;
+  // Buste effilé vers les épaules plutôt qu'une capsule uniforme : la
+  // silhouette se lit, et le sac a une surface franche où s'accrocher.
+  const bodyGeo = faceted(new THREE.CylinderGeometry(0.31, 0.24, 0.86, 8));
+  const body = new THREE.Mesh(bodyGeo, blue);
+  body.position.y = 1.28;
 
-  const head = new THREE.Mesh(faceted(new THREE.SphereGeometry(0.34, 10, 8)), skin);
-  head.position.y = 1.95;
+  const shoulders = new THREE.Mesh(
+    faceted(new THREE.CylinderGeometry(0.3, 0.33, 0.2, 8)),
+    blue
+  );
+  shoulders.position.y = 1.66;
+
+  const head = new THREE.Mesh(faceted(new THREE.SphereGeometry(0.27, 10, 8)), skin);
+  head.position.y = 1.94;
+  head.scale.set(1, 1.08, 0.94);
 
   const hairCap = new THREE.Mesh(
-    faceted(new THREE.SphereGeometry(0.35, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.52)),
+    faceted(new THREE.SphereGeometry(0.285, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.58)),
     hair
   );
-  hairCap.position.y = 2.04;
+  hairCap.position.y = 1.99;
 
-  const legGeo = faceted(new THREE.CapsuleGeometry(0.105, 0.48, 3, 5));
+  // Membres pivotant à la hanche et à l'épaule, pas en leur milieu : la
+  // géométrie est décalée vers le bas pour que la rotation parte du haut.
+  const legGeo = faceted(new THREE.CapsuleGeometry(0.115, 0.62, 3, 6));
+  legGeo.translate(0, -0.37, 0);
+
   const leftLeg = new THREE.Mesh(legGeo, blueDark);
-  leftLeg.position.set(-0.19, 0.34, 0);
+  leftLeg.position.set(-0.155, 0.9, 0);
 
   const rightLeg = leftLeg.clone();
-  rightLeg.position.x = 0.19;
+  rightLeg.position.x = 0.155;
 
-  const armGeo = faceted(new THREE.CapsuleGeometry(0.085, 0.43, 3, 5));
+  const armGeo = faceted(new THREE.CapsuleGeometry(0.082, 0.5, 3, 6));
+  armGeo.translate(0, -0.3, 0);
+
   const leftArm = new THREE.Mesh(armGeo, skin);
-  leftArm.position.set(-0.48, 1.18, 0);
-  leftArm.rotation.z = -0.15;
+  leftArm.position.set(-0.355, 1.62, 0);
+  leftArm.rotation.z = -0.12;
 
   const rightArm = leftArm.clone();
-  rightArm.position.x = 0.48;
-  rightArm.rotation.z = 0.15;
+  rightArm.position.x = 0.355;
+  rightArm.rotation.z = 0.12;
 
   // L'avant du personnage est son +Z local (voir player.rotation.y plus bas) :
   // le sac se porte donc en -Z, côté caméra quand on s'éloigne.
-  const bag = new THREE.Mesh(faceted(new THREE.BoxGeometry(0.42, 0.56, 0.26)), bagMat);
-  bag.position.set(0, 1.19, -0.4);
-  bag.rotation.x = 0.08;
+  // Le sac est plaqué contre le dos, sanglé aux épaules.
+  // Le buste fait 0.62 d'envergure : un sac plus étroit disparaîtrait derrière
+  // lui. Il est donc plus large que le torse et nettement décalé vers l'arrière.
+  const bag = new THREE.Mesh(faceted(new THREE.BoxGeometry(0.5, 0.54, 0.3)), bagMat);
+  bag.position.set(0, 1.34, -0.4);
 
-  group.add(body, head, hairCap, leftLeg, rightLeg, leftArm, rightArm, bag);
-  group.userData = { body, head, hairCap, leftLeg, rightLeg, leftArm, rightArm, bag };
+  const strapGeo = faceted(new THREE.BoxGeometry(0.07, 0.34, 0.06));
+  const leftStrap = new THREE.Mesh(strapGeo, bagMat);
+  leftStrap.position.set(-0.17, 1.56, -0.16);
+  leftStrap.rotation.x = -0.22;
+  const rightStrap = leftStrap.clone();
+  rightStrap.position.x = 0.17;
+
+  group.add(body, shoulders, head, hairCap, leftLeg, rightLeg,
+            leftArm, rightArm, bag, leftStrap, rightStrap);
+  group.userData = { body, shoulders, head, hairCap, leftLeg, rightLeg,
+                     leftArm, rightArm, bag };
   return group;
 }
 
@@ -538,9 +614,20 @@ function createChunk(cx, cz) {
     positions.setY(i, terrainHeight(worldX, worldZ));
 
     blendedTerrainColor(worldX, worldZ, vertexColor);
-    colors[i * 3] = vertexColor.r;
-    colors[i * 3 + 1] = vertexColor.g;
-    colors[i * 3 + 2] = vertexColor.b;
+
+    // Variation de teinte par sommet : deux ondes courtes décorrélées cassent
+    // l'aplat sans coûter un seul triangle de plus. L'altitude éclaircit
+    // légèrement les crêtes et assombrit les creux.
+    const grain =
+      Math.sin(worldX * 0.31 + worldZ * 0.17) * 0.5 +
+      Math.cos(worldX * 0.13 - worldZ * 0.27) * 0.5;
+
+    const height = positions.getY(i);
+    const shade = 1 + grain * 0.10 + Math.max(-1, Math.min(1, height / 7)) * 0.08;
+
+    colors[i * 3] = Math.min(1, vertexColor.r * shade);
+    colors[i * 3 + 1] = Math.min(1, vertexColor.g * shade);
+    colors[i * 3 + 2] = Math.min(1, vertexColor.b * shade);
   }
 
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -584,11 +671,16 @@ function createChunk(cx, cz) {
     const type = random01(cx * 41 + i, cz * 31 - i, 51);
 
     if (type < biome.density && !biome.dry) {
+      // Élancement variable : le même houppier donne des silhouettes
+      // différentes sans géométrie ni appel de rendu supplémentaires.
+      const slender = 0.72 + random01(cx * 5 + i, cz * 3 - i, 66) * 0.62;
+
       trees.push({
         x: localX,
         y,
         z: localZ,
         scale: 0.66 + random01(cx + i * 7, cz - i * 11, 62) * 0.78,
+        slender,
         rotation: random01(cx - i * 3, cz + i * 9, 64) * Math.PI * 2,
         biomeIndex
       });
@@ -656,7 +748,7 @@ function createChunk(cx, cz) {
     (obj, tree) => {
       obj.position.set(tree.x, tree.y, tree.z);
       obj.rotation.set(0, tree.rotation, 0);
-      obj.scale.setScalar(tree.scale);
+      obj.scale.set(tree.scale, tree.scale, tree.scale);
     }
   );
 
@@ -667,10 +759,16 @@ function createChunk(cx, cz) {
     [...trees, ...bushes],
     (obj, item) => {
       const sink = item.bushy ? 0.82 * item.scale : 0;
+      const slender = item.slender || 1;
 
       obj.position.set(item.x, item.y - sink, item.z);
       obj.rotation.set(0, item.rotation, 0);
-      obj.scale.setScalar(item.scale);
+      // Large et trapu, ou étroit et élancé : la variété vient de là.
+      obj.scale.set(
+        item.scale * (2 - slender) * 0.72 + item.scale * 0.28,
+        item.scale * slender,
+        item.scale * (2 - slender) * 0.72 + item.scale * 0.28
+      );
     },
     (item) => biomeTreeColors[item.biomeIndex]
   );
@@ -681,11 +779,12 @@ function createChunk(cx, cz) {
     rocks,
     (obj, rock) => {
       obj.position.set(rock.x, rock.y + 0.25 * rock.scale, rock.z);
-      obj.rotation.set(rock.seed * 0.7, rock.seed * Math.PI * 1.8, 0);
+      obj.rotation.set(rock.seed * 1.7, rock.seed * Math.PI * 1.8, rock.seed * 0.9);
+      // Galets aplatis ou blocs anguleux selon le tirage.
       obj.scale.set(
-        rock.scale,
-        rock.scale * (0.58 + rock.seed * 0.2),
-        rock.scale * 0.9
+        rock.scale * (0.8 + rock.seed * 0.5),
+        rock.scale * (0.45 + rock.seed * 0.55),
+        rock.scale * (0.75 + (1 - rock.seed) * 0.5)
       );
     }
   );
@@ -1189,7 +1288,7 @@ function animatePlayer(moving, sprinting, delta) {
     idleTime = 0;
     walkTime += delta * (sprinting ? 12 : 8);
 
-    const swing = Math.sin(walkTime) * (sprinting ? 0.62 : 0.42);
+    const swing = Math.sin(walkTime) * (sprinting ? 0.78 : 0.5);
 
     leftLeg.rotation.x = swing;
     rightLeg.rotation.x = -swing;
@@ -1198,8 +1297,8 @@ function animatePlayer(moving, sprinting, delta) {
 
     // Buste légèrement penché en avant à la course.
     body.rotation.x = sprinting ? 0.16 : 0.06;
-    body.position.y = 1.15;
-    head.position.y = 1.95;
+    body.position.y = 1.28;
+    head.position.y = 1.94;
 
     player.position.y += Math.abs(Math.sin(walkTime * 2)) * 0.025;
   } else {
@@ -1215,8 +1314,8 @@ function animatePlayer(moving, sprinting, delta) {
     idleTime += delta;
     const breath = Math.sin(idleTime * 1.7) * 0.012;
 
-    body.position.y = 1.15 + breath;
-    head.position.y = 1.95 + breath * 1.6;
+    body.position.y = 1.28 + breath;
+    head.position.y = 1.94 + breath * 1.6;
   }
 }
 
@@ -1388,6 +1487,10 @@ function animate() {
     player.position.y + 1.25,
     player.position.z
   );
+
+  // Le dôme est centré sur la caméra et dimensionné juste sous le plan far.
+  skyDome.position.copy(camera.position);
+  skyDome.scale.setScalar(CAMERA_FAR * 0.92);
 
   sun.position.set(
     player.position.x + SUN_OFFSET.x,
@@ -1694,6 +1797,14 @@ window.HORIZON = {
   // --- Fog Nomad ---
   get game() { return game.state; },
   get config() { return game.config; },
+  get spawnStats() { return game.spawnStats; },
+  get axisX() { return game.axisX; },
+  get fireCount() { return game.fireCount; },
+  get canLightFire() { return game.canLightFire(); },
+  get canPulse() { return game.canPulse(); },
+  lightFire() { return game.lightFire(); },
+  usePulse() { return game.usePulse(); },
+  resetSpawnStats() { game.resetSpawnStats(); },
   get fogGap() { return game.fogGap; },
   get resourceCount() { return game.resourceCount; },
   get bagTier() { return game.bagTier(); },

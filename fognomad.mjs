@@ -25,10 +25,25 @@ export const CONFIG = {
     speed: 4.6,             // unités/seconde, constante pour le Core Test
     acceleration: 0,        // réservé : 0 = vitesse constante
     damagePerSecond: 32,    // points de vie par seconde passée dedans
-    color: 0x322b3d,
+    // Corps de la brume : prune très sombre et saturé, pour trancher avec le
+    // ciel pâle et le sol vert de la zone sûre.
+    color: 0x241a2e,
+    // Crête du front, plus claire et malsaine : c'est elle qui dessine la
+    // ligne d'arrivée de la brume, visible de loin.
+    edgeColor: 0x9d7fb4,
     opacity: 1,
-    height: 34,
+    // Largeur du mur. La portée de vue est d'environ 80 unités : ce mur ne
+    // laisse jamais voir ses bords, même après plusieurs minutes de dérive.
     width: 460,
+    // Enfoncement sous le terrain : le mur doit sortir du sol, pas flotter.
+    // Le dégradé d'opacité est calculé au-dessus de cette limite, sinon la
+    // partie visible commence déjà à moitié effacée.
+    sink: 11,
+    // Dérive lente des nappes, en unités/seconde. Chaque nappe glisse à sa
+    // vitesse : la crête composite change de forme sans qu'aucun sommet ne
+    // soit recalculé.
+    driftSpeed: 1.4,
+    breathe: 0.9,           // amplitude du souffle vertical, en unités
     // En dessous de cette marge, l'avertissement visuel monte progressivement.
     warnDistance: 22
   },
@@ -61,22 +76,60 @@ export const CONFIG = {
     slowFactor: 0.32        // vitesse pendant la collecte : le détour coûte
   },
 
-  // Les ressources lointaines valent plus. Le couloir latéral est mesuré en
-  // écart absolu à l'axe de fuite de la run, c'est-à-dire au X de départ.
+  // Les ressources lointaines valent plus. L'écart latéral est mesuré depuis
+  // l'axe de fuite de la run.
+  //
+  // 0.3 utilisait des bandes dures (lateralMin/lateralMax) : hors bande, aucune
+  // pose. Combiné à un axe figé au départ, une run qui dérivait latéralement
+  // finissait dans un monde totalement vide — mesuré : 0 ressource dès le
+  // 40e chunk sur une diagonale. La probabilité est désormais continue : chaque
+  // type culmine à une distance et décroît doucement, sans jamais couper net.
   resources: {
-    bois:    { label: "Bois",    weight: 7,  value: 1,  color: 0x8a5a33, chance: 0.55, lateralMin: 0,  lateralMax: 20, size: 0.5 },
-    pierre:  { label: "Pierre",  weight: 13, value: 4,  color: 0x8d9299, chance: 0.32, lateralMin: 14, lateralMax: 44, size: 0.55 },
-    cristal: { label: "Cristal", weight: 5,  value: 14, color: 0x7fe6d8, chance: 0.13, lateralMin: 34, lateralMax: 78, size: 0.46 }
+    bois:    { label: "Bois",    weight: 7,  value: 1,  color: 0x9c6836,
+               lateralPeak: 0,  lateralSpread: 30, abundance: 1.00, size: 0.24 },
+    pierre:  { label: "Pierre",  weight: 13, value: 4,  color: 0x8d9299,
+               lateralPeak: 32, lateralSpread: 28, abundance: 0.78, size: 0.3 },
+    cristal: { label: "Cristal", weight: 5,  value: 14, color: 0x63e8d6,
+               lateralPeak: 64, lateralSpread: 32, abundance: 0.36, size: 0.5 }
   },
 
-  // Nombre de tentatives de pose par chunk. Chaque tentative peut échouer si
-  // le couloir latéral ne correspond pas.
+  // Tentatives de pose par chunk, et densité globale appliquée au poids total.
   spawnAttemptsPerChunk: 9,
+  spawnDensity: 0.30,
+
+  // L'axe de fuite suit le joueur, mais lentement : un détour de dix secondes
+  // ne déplace l'axe que de neuf unités, donc reste un vrai détour. Une dérive
+  // prolongée, elle, finit par emmener le couloir avec elle — sans quoi le
+  // monde se vide.
+  axisTrackSpeed: 0.9,
+  axisMaxLag: 70,
 
   // Paliers visuels du sac : seuils sur le rapport poids/max.
   bagTiers: [0, 0.18, 0.42, 0.68, 0.88],
 
-  telemetryKey: "fog-nomad-runs-0.3",
+  // Le cristal est une ressource d'urgence : le consommer repousse la brume.
+  // Dilemme visé : le garder (et porter son poids) ou l'utiliser maintenant.
+  crystal: {
+    pushDistance: 42,       // unités de marge regagnées
+    flashDuration: 0.75
+  },
+
+  // Feu de répit : une seule recette, un seul bouton.
+  fire: {
+    cost: { bois: 2, pierre: 1 },
+    duration: 18,           // secondes — la brume reste la menace principale
+    fogSlowFactor: 0.16,    // vitesse de la brume pendant le répit
+    staminaBonus: 48,       // récupération de souffle par seconde à proximité
+    radius: 7
+  },
+
+  // Un objet jeté tombe au sol et reste ramassable tant que son chunk vit.
+  drop: {
+    scatter: 1.6,           // dispersion autour du joueur
+    rearmDelay: 1.4         // délai avant de pouvoir le reprendre
+  },
+
+  telemetryKey: "fog-nomad-runs-0.4",
   maxStoredRuns: 20,
 
   // Au-delà de cet écart latéral, on comptabilise un détour.
@@ -84,6 +137,28 @@ export const CONFIG = {
 };
 
 const RESOURCE_KEYS = Object.keys(CONFIG.resources);
+
+/**
+ * Poids de chaque type de ressource à une distance latérale donnée.
+ * Chaque type culmine à sa distance et décroît en cloche : près de l'axe on
+ * trouve surtout du bois, loin surtout des cristaux, et il y a toujours
+ * quelque chose entre les deux.
+ */
+export function lateralWeights(lateral) {
+  const weights = {};
+  let total = 0;
+
+  for (const key of RESOURCE_KEYS) {
+    const spec = CONFIG.resources[key];
+    const d = (lateral - spec.lateralPeak) / spec.lateralSpread;
+    const w = spec.abundance * Math.exp(-d * d);
+
+    weights[key] = w;
+    total += w;
+  }
+
+  return { weights, total };
+}
 
 /** Vitesse relative en fonction de la charge. Une seule formule, ici. */
 export function speedFromWeight(ratio) {
@@ -101,7 +176,7 @@ export function bagTierFor(ratio) {
 }
 
 export function createFogNomad(ctx) {
-  const { THREE, scene, player, renderer, terrainHeight, onRestart } = ctx;
+  const { THREE, scene, player, renderer, terrainHeight, onRestart, chunkAt } = ctx;
 
   // -------------------------------------------------------------------------
   // Ressources : géométries et matériaux partagés, objets individuels.
@@ -113,18 +188,67 @@ export function createFogNomad(ctx) {
   // chemin de rendu déjà éprouvé sur l'appareil. Le coût est mesuré, pas supposé.
   // -------------------------------------------------------------------------
 
+  // Chaque ressource doit se reconnaître d'un coup d'œil, et le cristal de loin.
   const resourceGeometries = {
-    bois: faceted(new THREE.CylinderGeometry(0.22, 0.26, 0.9, 6)),
-    pierre: faceted(new THREE.DodecahedronGeometry(0.42, 0)),
-    cristal: faceted(new THREE.OctahedronGeometry(0.46, 0))
+    // Deux rondins croisés posés au sol.
+    bois: assemble([
+      { geo: new THREE.CylinderGeometry(0.15, 0.17, 1.05, 6), rot: [0, 0, Math.PI / 2], pos: [0, -0.12, 0.1] },
+      { geo: new THREE.CylinderGeometry(0.14, 0.16, 0.95, 6), rot: [0, 0.7, Math.PI / 2], pos: [0.04, 0.12, -0.08] }
+    ]),
+    // Un bloc principal flanqué de deux éclats.
+    pierre: assemble([
+      { geo: new THREE.DodecahedronGeometry(0.38, 0), scale: [1, 0.78, 1] },
+      { geo: new THREE.DodecahedronGeometry(0.2, 0), pos: [0.34, -0.14, 0.14] },
+      { geo: new THREE.DodecahedronGeometry(0.15, 0), pos: [-0.3, -0.18, -0.12] }
+    ]),
+    // Un éclat élancé et deux esquilles : la verticale se repère de loin.
+    cristal: assemble([
+      { geo: new THREE.OctahedronGeometry(0.34, 0), scale: [0.72, 2.5, 0.72], pos: [0, 0.34, 0] },
+      { geo: new THREE.OctahedronGeometry(0.18, 0), scale: [0.7, 1.7, 0.7], rot: [0, 0, 0.42], pos: [0.26, -0.06, 0.06] },
+      { geo: new THREE.OctahedronGeometry(0.14, 0), scale: [0.7, 1.5, 0.7], rot: [0, 0, -0.5], pos: [-0.23, -0.12, -0.07] }
+    ])
   };
 
   const resourceMaterials = {};
   for (const key of RESOURCE_KEYS) {
     resourceMaterials[key] = new THREE.MeshLambertMaterial({
       color: CONFIG.resources[key].color,
-      emissive: key === "cristal" ? 0x1c5a52 : 0x000000
+      // Le cristal s'auto-éclaire : c'est ce qui le rend repérable à distance,
+      // sans lumière ponctuelle ni post-traitement.
+      emissive: key === "cristal" ? 0x2f8f80 : 0x000000
     });
+  }
+
+  /**
+   * Assemble plusieurs primitives en une géométrie unique. Une ressource reste
+   * ainsi un seul objet, un seul appel de rendu, tout en ayant une silhouette
+   * composée au lieu d'une primitive nue.
+   */
+  function assemble(parts) {
+    const baked = parts.map(({ geo, pos = [0, 0, 0], rot = [0, 0, 0], scale = [1, 1, 1] }) => {
+      const g = (geo.index ? geo.toNonIndexed() : geo.clone());
+      g.scale(scale[0], scale[1], scale[2]);
+      g.rotateX(rot[0]); g.rotateY(rot[1]); g.rotateZ(rot[2]);
+      g.translate(pos[0], pos[1], pos[2]);
+      return g;
+    });
+
+    let total = 0;
+    for (const g of baked) total += g.attributes.position.count;
+
+    const position = new Float32Array(total * 3);
+    let offset = 0;
+
+    for (const g of baked) {
+      position.set(g.attributes.position.array, offset * 3);
+      offset += g.attributes.position.count;
+      g.dispose();
+    }
+
+    const merged = new THREE.BufferGeometry();
+    merged.setAttribute("position", new THREE.BufferAttribute(position, 3));
+    merged.computeVertexNormals();
+    return merged;
   }
 
   function faceted(geometry) {
@@ -135,32 +259,114 @@ export function createFogNomad(ctx) {
     return result;
   }
 
+  // Feu de répit : trois bûches croisées et une flamme conique. Géométries et
+  // matériaux partagés, objets ordinaires — jamais d'InstancedMesh.
+  const logGeometry = faceted(new THREE.CylinderGeometry(0.11, 0.13, 0.85, 5));
+  const flameGeometry = faceted(new THREE.ConeGeometry(0.34, 0.95, 6));
+  const emberGeometry = faceted(new THREE.DodecahedronGeometry(0.3, 0));
+
+  const logMaterial = new THREE.MeshLambertMaterial({ color: 0x5b3f28 });
+  const flameMaterial = new THREE.MeshBasicMaterial({ color: 0xffb057, fog: true });
+  const emberMaterial = new THREE.MeshLambertMaterial({
+    color: 0x4a3226, emissive: 0x7a2c10
+  });
+
+  function buildFire() {
+    const fire = new THREE.Group();
+
+    const embers = new THREE.Mesh(emberGeometry, emberMaterial);
+    embers.scale.set(1, 0.4, 1);
+    fire.add(embers);
+
+    for (let i = 0; i < 3; i++) {
+      const log = new THREE.Mesh(logGeometry, logMaterial);
+      log.rotation.set(1.15, (i / 3) * Math.PI * 2, 0);
+      log.position.y = 0.2;
+      fire.add(log);
+    }
+
+    const flame = new THREE.Mesh(flameGeometry, flameMaterial);
+    flame.position.y = 0.72;
+    fire.add(flame);
+    fire.userData.flame = flame;
+
+    return fire;
+  }
+
   // -------------------------------------------------------------------------
-  // Brume : deux plans, quatre triangles. Le dégradé vertical passe par les
-  // couleurs de sommets, donc aucun shader et aucune texture.
+  // Brume : quatre nappes, aucun shader, aucune texture, aucune particule.
+  //
+  // Le relief vient de la géométrie (crête ondulée par les couleurs de
+  // sommets), la profondeur de l'étagement des nappes en Z, et le mouvement
+  // d'une dérive lente de chaque nappe. Un système de particules aurait coûté
+  // des milliers de quads pour un résultat moins lisible sur un écran de
+  // téléphone.
   // -------------------------------------------------------------------------
 
   /**
-   * Mur de brume : un plan à quatre rangées, dont l'opacité décroît vers le
-   * haut. L'alpha passe par un attribut de couleur à 4 composantes — Three.js
+   * Une nappe de brume.
+   *
+   * Le profil vertical n'est pas un simple dégradé : la nappe est pleinement
+   * opaque jusqu'à `crestY`, puis s'efface sur `soft` unités. `crest` fait
+   * onduler cette hauteur d'effacement le long du mur — c'est ce qui remplace
+   * un bord rectiligne par un front de nuage.
+   *
+   * Tout est exprimé en unités monde au-dessus du sol, pas en fraction du
+   * plan : les quatre nappes ont des hauteurs différentes et doivent pourtant
+   * s'empiler de façon prévisible.
+   *
+   * L'alpha voyage dans un attribut de couleur à 4 composantes — Three.js
    * l'accepte nativement — donc aucun shader et aucune texture.
    */
-  function buildFogWall(width, height, topAlpha) {
-    const geometry = new THREE.PlaneGeometry(width, height, 1, 3);
+  function buildFogWall(width, height, options) {
+    const {
+      baseAlpha = 1,
+      crestY = 15,
+      soft = 8,
+      falloff = 1.2,
+      crest = 0,
+      phase = 0,
+      edgeStrength = 0,
+      streak = 0.10
+    } = options;
+
+    const geometry = new THREE.PlaneGeometry(width, height, 26, 7);
     const position = geometry.attributes.position;
     const colors = new Float32Array(position.count * 4);
     const base = new THREE.Color(CONFIG.fog.color);
+    const edge = new THREE.Color(CONFIG.fog.edgeColor);
+    const sink = CONFIG.fog.sink;
 
     for (let i = 0; i < position.count; i++) {
-      // 0 en bas du mur, 1 en haut.
-      const t = (position.getY(i) + height / 2) / height;
-      // Opaque au sol, effacée en altitude : un mur, pas une dalle.
-      const alpha = topAlpha * Math.pow(1 - t, 2.1);
+      const x = position.getX(i);
+      // Hauteur au-dessus du sol, en unités monde. La partie enterrée sort
+      // négative et reste pleinement opaque, ce qui est exactement voulu.
+      const y = position.getY(i) + height / 2 - sink;
 
-      // La brume s'éclaircit un peu en montant, comme une vapeur qui se dilue.
-      colors[i * 4] = base.r + t * 0.10;
-      colors[i * 4 + 1] = base.g + t * 0.10;
-      colors[i * 4 + 2] = base.b + t * 0.13;
+      // Deux ondes de périodes incommensurables : la crête ne se répète pas
+      // visiblement sur la largeur du mur.
+      const billow = crest * (
+        Math.sin(x * 0.055 + phase) * 0.62 +
+        Math.sin(x * 0.021 - phase * 1.7) * 0.38
+      );
+
+      const top = crestY * (1 + billow);
+      const k = Math.min(1, Math.max(0, (top - y) / soft));
+      const alpha = baseAlpha * Math.pow(k, falloff);
+
+      // Traînées verticales : la brume n'est pas une peinture unie. Deux
+      // sinusoïdes croisées suffisent à donner du volume à un plan.
+      const veil = 1 + streak *
+        Math.sin(x * 0.085 + phase * 2.1) *
+        Math.sin(x * 0.031 - phase);
+
+      // La crête s'éclaircit : une vapeur éclairée par le dessus, et surtout
+      // une ligne de front repérable au-dessus du corps sombre.
+      const mix = edgeStrength * (1 - k);
+
+      colors[i * 4] = (base.r + (edge.r - base.r) * mix) * veil;
+      colors[i * 4 + 1] = (base.g + (edge.g - base.g) * mix) * veil;
+      colors[i * 4 + 2] = (base.b + (edge.b - base.b) * mix) * veil;
       colors[i * 4 + 3] = alpha;
     }
 
@@ -180,24 +386,74 @@ export function createFogNomad(ctx) {
 
   const fogGroup = new THREE.Group();
 
-  // Le mur est enfoncé sous le terrain : il doit sortir du sol, pas flotter.
-  const fogFront = new THREE.Mesh(
-    buildFogWall(CONFIG.fog.width, CONFIG.fog.height, 1),
-    fogMaterial
-  );
-  fogFront.position.y = CONFIG.fog.height / 2 - 11;
-  fogFront.renderOrder = 5;
+  // Quatre nappes étagées, de la plus lointaine à la plus proche du joueur.
+  // Le joueur fuit vers les Z décroissants : une nappe en Z positif est donc
+  // *derrière* le mur, une nappe en Z négatif *devant*.
+  //
+  // `renderOrder` croît vers le joueur pour que le mélange alpha se fasse de
+  // l'arrière vers l'avant, indépendamment du tri automatique.
+  const FOG_LAYERS = [
+    // Fond : la plus haute, presque opaque — c'est elle qui bouche l'horizon.
+    { z: 30, crestY: 27, soft: 13, baseAlpha: 0.86, crest: 0.17,
+      edge: 0.08, streak: 0.07, drift: 0.55, order: 3 },
+    { z: 14, crestY: 21, soft: 10, baseAlpha: 0.94, crest: 0.25,
+      edge: 0.16, streak: 0.10, drift: -0.85, order: 4 },
+    // Corps : le mur proprement dit, opaque au niveau des yeux.
+    { z: 0, crestY: 15, soft: 8, baseAlpha: 1.00, crest: 0.33,
+      edge: 0.30, streak: 0.12, drift: 1.00, order: 5 },
+    // Avant-garde : basse et translucide. Elle déborde vers le joueur, avale
+    // les objets progressivement au lieu de les couper net, et donne au front
+    // une bordure claire lisible même quand le mur remplit l'écran.
+    { z: -8, crestY: 7, soft: 5, baseAlpha: 0.55, crest: 0.46,
+      edge: 0.62, streak: 0.16, drift: -1.35, order: 6 }
+  ];
 
-  // Second plan en retrait : donne de l'épaisseur sans coût réel.
-  const fogBack = new THREE.Mesh(
-    buildFogWall(CONFIG.fog.width, CONFIG.fog.height * 1.5, 0.72),
-    fogMaterial
-  );
-  fogBack.position.set(0, CONFIG.fog.height * 0.75 - 11, 11);
-  fogBack.renderOrder = 4;
+  const fogLayers = FOG_LAYERS.map((spec, index) => {
+    // Le plan doit contenir la crête la plus haute possible, plus la partie
+    // enterrée : la hauteur se déduit, elle ne se règle pas à la main.
+    const height = CONFIG.fog.sink + spec.crestY * (1 + spec.crest) + 3;
 
-  fogGroup.add(fogFront, fogBack);
+    const mesh = new THREE.Mesh(
+      buildFogWall(CONFIG.fog.width, height, {
+        baseAlpha: spec.baseAlpha,
+        crestY: spec.crestY,
+        soft: spec.soft,
+        crest: spec.crest,
+        phase: index * 1.9,
+        edgeStrength: spec.edge,
+        streak: spec.streak
+      }),
+      fogMaterial
+    );
+
+    mesh.position.set(0, height / 2 - CONFIG.fog.sink, spec.z);
+    mesh.renderOrder = spec.order;
+    mesh.frustumCulled = false;
+    fogGroup.add(mesh);
+
+    return { mesh, baseY: mesh.position.y, drift: spec.drift, phase: index * 1.3 };
+  });
+
   scene.add(fogGroup);
+
+  /**
+   * Variation lente : chaque nappe glisse latéralement à sa propre vitesse et
+   * respire verticalement. Comme les crêtes des quatre nappes sont décalées et
+   * se croisent, la silhouette du front change en permanence sans qu'aucune
+   * géométrie ne soit recalculée. Le mur fait 460 unités de large pour une
+   * portée de vue d'environ 80 : la dérive ne découvre jamais ses bords.
+   */
+  function updateFogVisual(delta) {
+    for (const layer of fogLayers) {
+      layer.phase += delta;
+      layer.mesh.position.x += layer.drift * CONFIG.fog.driftSpeed * delta;
+
+      // Recentrage discret : la dérive ne doit pas s'accumuler sans fin.
+      layer.mesh.position.x *= 0.999;
+      layer.mesh.position.y = layer.baseY +
+        Math.sin(layer.phase * 0.5) * CONFIG.fog.breathe;
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Sac visuel : le sac du personnage grossit et reçoit des caisses.
@@ -205,23 +461,37 @@ export function createFogNomad(ctx) {
 
   const bag = player.userData.bag;
   const bagBaseScale = bag.scale.clone();
+  const BAG_BASE_Y = bag.position.y;
+  const BAG_BASE_Z = bag.position.z;
+  const BAG_HEIGHT = bag.geometry.boundingBox
+    ? bag.geometry.boundingBox.max.y - bag.geometry.boundingBox.min.y
+    : (bag.geometry.computeBoundingBox(),
+       bag.geometry.boundingBox.max.y - bag.geometry.boundingBox.min.y);
   const bagCrateMaterial = new THREE.MeshLambertMaterial({ color: 0x6f7d55 });
   const bagCrates = [];
 
   {
-    const crateGeometry = faceted(new THREE.BoxGeometry(0.2, 0.18, 0.16));
-    const spots = [
-      { x: -0.11, y: 0.34, z: -0.04 },
-      { x: 0.12, y: 0.36, z: 0.03 },
-      { x: 0.0, y: 0.47, z: -0.02 }
+    // Trois charges qui débordent du sac aux paliers hauts : le joueur doit
+    // voir qu'il est lourd sans lire la jauge.
+    //
+    // Elles sont filles du PERSONNAGE, pas du sac : le sac se met à l'échelle
+    // par palier, et des caisses filles auraient grossi avec lui jusqu'à
+    // couvrir la tête. Leur position est recalculée à partir du dessus du sac.
+    const crateGeometry = faceted(new THREE.BoxGeometry(0.22, 0.2, 0.18));
+    const rollGeometry = faceted(new THREE.CylinderGeometry(0.09, 0.09, 0.46, 6));
+
+    const crates = [
+      { geo: crateGeometry, offset: [-0.13, 0.10, -0.02], rot: [0, 0.4, 0.12] },
+      { geo: crateGeometry, offset: [0.14, 0.16, -0.10], rot: [0, -0.5, -0.18] },
+      { geo: rollGeometry, offset: [0, 0.05, -0.24], rot: [0, 0, Math.PI / 2] }
     ];
 
-    for (const spot of spots) {
-      const crate = new THREE.Mesh(crateGeometry, bagCrateMaterial);
-      crate.position.set(spot.x, spot.y, spot.z);
-      crate.rotation.y = spot.x * 3;
+    for (const { geo, offset, rot } of crates) {
+      const crate = new THREE.Mesh(geo, bagCrateMaterial);
+      crate.rotation.set(rot[0], rot[1], rot[2]);
       crate.visible = false;
-      bag.add(crate);
+      crate.userData.offset = offset;
+      player.add(crate);
       bagCrates.push(crate);
     }
   }
@@ -241,6 +511,7 @@ export function createFogNomad(ctx) {
     fogZ: 0,
     startZ: 0,
     startX: 0,
+    axisX: 0,
     elapsed: 0,
     distance: 0,
     maxWeight: 0,
@@ -248,8 +519,18 @@ export function createFogNomad(ctx) {
     dropped: 0,
     sprintTime: 0,
     minFogGap: Infinity,
+    maxFogGap: 0,
+    gapSum: 0,
+    gapSamples: 0,
+    timeAbove200: 0,
+    timeBelow50: 0,
     detours: 0,
     inFog: false,
+    fires: 0,
+    fireUntil: 0,
+    pulses: 0,
+    firesLit: 0,
+    flashUntil: 0,
     collecting: null,
     collectProgress: 0,
     sinceSprint: 0,
@@ -259,6 +540,20 @@ export function createFogNomad(ctx) {
   // Ressources actives, groupées par chunk pour être libérées avec lui.
   const chunkResources = new Map();
   const activeResources = new Set();
+
+  // Diagnostic de génération : sert à vérifier que les ressources continuent
+  // d'apparaître sur toute la durée d'une run, pas seulement au départ.
+  const spawnStats = {
+    chunksPeuples: 0,
+    chunksVides: 0,
+    generees: 0,
+    detruitesAvecChunk: 0,
+    ramassees: 0,
+    rejetsCouloir: 0,
+    rejetsEau: 0,
+    parType: {},
+    dernierChunk: null
+  };
 
   function resetRun() {
     state.running = true;
@@ -271,6 +566,7 @@ export function createFogNomad(ctx) {
     for (const key of RESOURCE_KEYS) state.inventory[key] = 0;
     state.startZ = player.position.z;
     state.startX = player.position.x;
+    state.axisX = player.position.x;
     state.fogZ = player.position.z + CONFIG.fog.startDistance;
     state.elapsed = 0;
     state.distance = 0;
@@ -279,8 +575,18 @@ export function createFogNomad(ctx) {
     state.dropped = 0;
     state.sprintTime = 0;
     state.minFogGap = Infinity;
+    state.maxFogGap = 0;
+    state.gapSum = 0;
+    state.gapSamples = 0;
+    state.timeAbove200 = 0;
+    state.timeBelow50 = 0;
     state.detours = 0;
     state.inFog = false;
+    state.fires = 0;
+    state.fireUntil = 0;
+    state.pulses = 0;
+    state.firesLit = 0;
+    state.flashUntil = 0;
     state.collecting = null;
     state.collectProgress = 0;
     state.sinceSprint = 0;
@@ -294,33 +600,37 @@ export function createFogNomad(ctx) {
 
   function populateChunk(group, key, cx, cz, centerX, centerZ, random01) {
     const placed = [];
+    const axisX = currentAxisX();
+    let rejetsCouloir = 0;
+    let rejetsEau = 0;
 
     for (let i = 0; i < CONFIG.spawnAttemptsPerChunk; i++) {
-      const roll = random01(cx * 31 + i * 17, cz * 47 - i * 23, 211);
-      let chosen = null;
-      let acc = 0;
-
-      for (const key2 of RESOURCE_KEYS) {
-        acc += CONFIG.resources[key2].chance;
-        if (roll < acc) { chosen = key2; break; }
-      }
-
-      if (!chosen) continue;
-
-      const spec = CONFIG.resources[chosen];
       const localX = (random01(cx * 71 + i * 13, cz * 29 + i * 7, 223) - 0.5) * (32 - 4);
       const localZ = (random01(cx * 19 - i * 11, cz * 83 + i * 5, 227) - 0.5) * (32 - 4);
       const worldX = centerX + localX;
       const worldZ = centerZ + localZ;
 
-      // Couloir latéral, mesuré depuis l'axe de la run : c'est ce qui rend le
-      // détour nécessaire. Ancré sur le départ, pas sur l'origine du monde,
-      // pour qu'une run lancée n'importe où ait le même couloir.
-      const lateral = Math.abs(worldX - state.startX);
-      if (lateral < spec.lateralMin || lateral > spec.lateralMax) continue;
+      // Écart latéral à l'axe de fuite : il décide de la NATURE de la ressource,
+      // plus de son existence. Loin de l'axe, on trouve surtout des cristaux ;
+      // près de l'axe, surtout du bois.
+      const lateral = Math.abs(worldX - axisX);
+      const { weights, total } = lateralWeights(lateral);
 
+      const roll = random01(cx * 31 + i * 17, cz * 47 - i * 23, 211);
+      if (roll > Math.min(1, total * CONFIG.spawnDensity)) { rejetsCouloir++; continue; }
+
+      // Second tirage : quel type, proportionnellement aux poids.
+      let pick = random01(cx * 13 - i * 29, cz * 61 + i * 11, 233) * total;
+      let chosen = RESOURCE_KEYS[0];
+
+      for (const key2 of RESOURCE_KEYS) {
+        pick -= weights[key2];
+        if (pick <= 0) { chosen = key2; break; }
+      }
+
+      const spec = CONFIG.resources[chosen];
       const y = terrainHeight(worldX, worldZ);
-      if (y < -2.2) continue;
+      if (y < -2.2) { rejetsEau++; continue; }
 
       const mesh = new THREE.Mesh(resourceGeometries[chosen], resourceMaterials[chosen]);
       mesh.position.set(localX, y + spec.size, localZ);
@@ -340,13 +650,36 @@ export function createFogNomad(ctx) {
     }
 
     if (placed.length > 0) chunkResources.set(key, placed);
+
+    spawnStats.generees += placed.length;
+    spawnStats.rejetsCouloir += rejetsCouloir;
+    spawnStats.rejetsEau += rejetsEau;
+    if (placed.length > 0) spawnStats.chunksPeuples++; else spawnStats.chunksVides++;
+    for (const mesh of placed) {
+      const t = mesh.userData.resource.type;
+      spawnStats.parType[t] = (spawnStats.parType[t] || 0) + 1;
+    }
+    spawnStats.dernierChunk = {
+      key, poses: placed.length, rejetsCouloir, rejetsEau,
+      lateralChunk: +Math.abs(centerX - axisX).toFixed(1)
+    };
   }
 
   function onChunkDisposed(key) {
+    // Les feux du chunk s'éteignent avec lui : avalé par la brume, il n'en
+    // reste rien. C'est la même règle que pour les objets jetés.
+    const fires = chunkFires.get(key);
+    if (fires) {
+      for (const fire of fires) activeFires.delete(fire);
+      chunkFires.delete(key);
+      state.fires = activeFires.size;
+    }
+
     const list = chunkResources.get(key);
     if (!list) return;
 
     for (const mesh of list) activeResources.delete(mesh);
+    spawnStats.detruitesAvecChunk += list.length;
     chunkResources.delete(key);
   }
 
@@ -365,6 +698,21 @@ export function createFogNomad(ctx) {
   // Sac : poids, collecte, abandon
   // -------------------------------------------------------------------------
 
+  /**
+   * Axe de fuite effectif : la dérive lente est appliquée dans update(), mais
+   * le retard est borné ici, à l'usage. Un saut de position ne peut donc pas
+   * laisser le couloir de ressources loin derrière le joueur.
+   */
+  function currentAxisX() {
+    const lag = player.position.x - state.axisX;
+
+    if (Math.abs(lag) > CONFIG.axisMaxLag) {
+      state.axisX = player.position.x - Math.sign(lag) * CONFIG.axisMaxLag;
+    }
+
+    return state.axisX;
+  }
+
   function weightRatio() {
     return state.weight / CONFIG.weight.max;
   }
@@ -377,10 +725,17 @@ export function createFogNomad(ctx) {
     state.inventory[type] = (state.inventory[type] || 0) + 1;
     state.weight += CONFIG.resources[type].weight;
     state.collected++;
+    spawnStats.ramassees++;
     state.maxWeight = Math.max(state.maxWeight, state.weight);
     updateBagVisual();
   }
 
+  /**
+   * Jeter un objet le pose au sol près du joueur, dans le chunk courant. Il
+   * reste ramassable tant que ce chunk vit ; avalé par la brume ou évacué par
+   * le streaming, il est perdu. C'est la règle la plus simple qui évite une
+   * mémoire de monde infinie.
+   */
   function dropOne(type) {
     if (!state.inventory[type]) return false;
 
@@ -388,23 +743,191 @@ export function createFogNomad(ctx) {
     state.weight = Math.max(0, state.weight - CONFIG.resources[type].weight);
     state.dropped++;
     updateBagVisual();
+
+    const entry = chunkAt ? chunkAt(player.position.x, player.position.z) : null;
+    if (entry) {
+      const spread = CONFIG.drop.scatter;
+      const worldX = player.position.x + (Math.random() - 0.5) * spread * 2;
+      const worldZ = player.position.z + (Math.random() - 0.5) * spread * 2;
+      spawnResourceMesh(entry.group, entry.key, type, worldX, worldZ, CONFIG.drop.rearmDelay);
+    }
+
     return true;
+  }
+
+  /**
+   * Pose une ressource dans un chunk. Sert à la génération procédurale comme
+   * aux objets jetés : même rendu, même cycle de vie, même ramassage.
+   */
+  function spawnResourceMesh(group, key, type, worldX, worldZ, delay = 0) {
+    const spec = CONFIG.resources[type];
+    const y = terrainHeight(worldX, worldZ);
+    const mesh = new THREE.Mesh(resourceGeometries[type], resourceMaterials[type]);
+
+    mesh.position.set(worldX - group.position.x, y + spec.size, worldZ - group.position.z);
+    mesh.rotation.y = Math.random() * Math.PI * 2;
+    mesh.userData.kind = "ressources";
+    mesh.userData.resource = {
+      type, worldX, worldZ, baseY: y + spec.size, chunkKey: key,
+      readyAt: state.elapsed + delay
+    };
+
+    group.add(mesh);
+    activeResources.add(mesh);
+
+    const list = chunkResources.get(key);
+    if (list) list.push(mesh); else chunkResources.set(key, [mesh]);
+
+    return mesh;
+  }
+
+  // Feux allumés : suivis à part pour expirer et pour être oubliés avec leur
+  // chunk, comme les ressources.
+  const activeFires = new Set();
+  const chunkFires = new Map();
+
+  function canLightFire() {
+    for (const [type, need] of Object.entries(CONFIG.fire.cost)) {
+      if ((state.inventory[type] || 0) < need) return false;
+    }
+    return !state.dead;
+  }
+
+  function lightFire() {
+    if (!canLightFire()) return false;
+
+    for (const [type, need] of Object.entries(CONFIG.fire.cost)) {
+      state.inventory[type] -= need;
+      state.weight = Math.max(0, state.weight - CONFIG.resources[type].weight * need);
+    }
+    updateBagVisual();
+
+    const entry = chunkAt ? chunkAt(player.position.x, player.position.z) : null;
+    if (!entry) return false;
+
+    const fire = buildFire();
+    fire.position.set(
+      player.position.x - entry.group.position.x,
+      terrainHeight(player.position.x, player.position.z),
+      player.position.z - entry.group.position.z
+    );
+    fire.userData.kind = "feux";
+    fire.userData.fire = {
+      until: state.elapsed + CONFIG.fire.duration,
+      worldX: player.position.x,
+      worldZ: player.position.z,
+      chunkKey: entry.key
+    };
+
+    entry.group.add(fire);
+    activeFires.add(fire);
+
+    const list = chunkFires.get(entry.key);
+    if (list) list.push(fire); else chunkFires.set(entry.key, [fire]);
+
+    state.firesLit++;
+    state.fireUntil = Math.max(state.fireUntil, fire.userData.fire.until);
+    emit();
+    return true;
+  }
+
+  function canPulse() {
+    return !state.dead && (state.inventory.cristal || 0) > 0;
+  }
+
+  /** Consomme un cristal : la brume est repoussée d'un coup. */
+  function usePulse() {
+    if (!canPulse()) return false;
+
+    state.inventory.cristal--;
+    state.weight = Math.max(0, state.weight - CONFIG.resources.cristal.weight);
+    state.fogZ += CONFIG.crystal.pushDistance;
+    state.pulses++;
+    state.flashUntil = state.elapsed + CONFIG.crystal.flashDuration;
+    updateBagVisual();
+    emit();
+    return true;
+  }
+
+  /** Les cristaux tournent lentement : un point mouvant se repère de loin. */
+  function spinCrystals(delta) {
+    for (const mesh of activeResources) {
+      if (mesh.userData.resource.type === "cristal") mesh.rotation.y += delta * 0.9;
+    }
+  }
+
+  function updateFires(delta) {
+    let anyActive = false;
+
+    for (const fire of [...activeFires]) {
+      const info = fire.userData.fire;
+
+      if (state.elapsed >= info.until) {
+        removeFire(fire);
+        continue;
+      }
+
+      anyActive = true;
+
+      // Flamme vacillante : une mise à l'échelle, pas un système de particules.
+      const flame = fire.userData.flame;
+      const flicker = 0.85 + Math.sin(state.elapsed * 11 + info.worldX) * 0.15;
+      flame.scale.set(flicker, 1 + (1 - flicker) * 1.6, flicker);
+
+      const dist = Math.hypot(
+        info.worldX - player.position.x,
+        info.worldZ - player.position.z
+      );
+
+      if (dist < CONFIG.fire.radius) {
+        state.stamina = Math.min(
+          CONFIG.stamina.max,
+          state.stamina + CONFIG.fire.staminaBonus * delta
+        );
+      }
+    }
+
+    state.fires = activeFires.size;
+    return anyActive;
+  }
+
+  function removeFire(fire) {
+    activeFires.delete(fire);
+    if (fire.parent) fire.parent.remove(fire);
+
+    const list = chunkFires.get(fire.userData.fire.chunkKey);
+    if (list) {
+      const index = list.indexOf(fire);
+      if (index !== -1) list.splice(index, 1);
+    }
   }
 
   function updateBagVisual() {
     const ratio = Math.min(1, weightRatio());
     const tier = bagTierFor(ratio);
 
-    // Le sac gonfle par paliers : la charge doit se lire sur la silhouette.
-    const grow = 1 + tier * 0.22;
+    // Le sac gonfle par paliers, et surtout s'épaissit vers l'arrière : de
+    // profil comme de dos, la charge se lit sur la silhouette.
+    // La charge s'empile surtout vers l'arrière et le haut. La croissance est
+    // bornée : au dernier palier le sac doit rester un sac sur un dos, pas un
+    // bloc qui avale les bras et les jambes de la silhouette.
     bag.scale.set(
-      bagBaseScale.x * grow,
-      bagBaseScale.y * (1 + tier * 0.3),
-      bagBaseScale.z * grow
+      bagBaseScale.x * (1 + tier * 0.13),
+      bagBaseScale.y * (1 + tier * 0.17),
+      bagBaseScale.z * (1 + tier * 0.36)
     );
+    bag.position.y = BAG_BASE_Y + tier * 0.03;
+    bag.position.z = BAG_BASE_Z - tier * 0.05;
+
+    // Les caisses se posent sur le dessus réel du sac gonflé, à taille
+    // constante : elles restent lisibles et ne masquent jamais la tête.
+    const top = bag.position.y + (BAG_HEIGHT * bag.scale.y) / 2;
 
     for (let i = 0; i < bagCrates.length; i++) {
-      bagCrates[i].visible = tier >= i + 2;
+      const crate = bagCrates[i];
+      const [ox, oy, oz] = crate.userData.offset;
+      crate.position.set(ox, top + oy, bag.position.z + oz);
+      crate.visible = tier >= i + 2;
     }
   }
 
@@ -432,14 +955,26 @@ export function createFogNomad(ctx) {
 
     state.elapsed += delta;
 
+    // --- feux de répit ---
+    const sheltered = updateFires(delta);
+
     // --- brume ---
-    const speed = CONFIG.fog.speed + CONFIG.fog.acceleration * state.elapsed;
+    // Un feu allumé la ralentit fortement, mais ne l'arrête jamais.
+    const speed = (CONFIG.fog.speed + CONFIG.fog.acceleration * state.elapsed) *
+      (sheltered ? CONFIG.fire.fogSlowFactor : 1);
+
     state.fogZ -= speed * delta;
 
     fogGroup.position.set(player.position.x, 0, state.fogZ);
+    updateFogVisual(delta);
 
     const gap = state.fogZ - player.position.z;
     state.minFogGap = Math.min(state.minFogGap, gap);
+    state.maxFogGap = Math.max(state.maxFogGap, gap);
+    state.gapSum += gap;
+    state.gapSamples++;
+    if (gap > 200) state.timeAbove200 += delta;
+    if (gap < 50) state.timeBelow50 += delta;
     state.inFog = gap <= 0;
 
     if (state.inFog) {
@@ -452,10 +987,18 @@ export function createFogNomad(ctx) {
       }
     }
 
+    // --- axe de fuite ---
+    // Il rattrape le joueur trop lentement pour annuler un détour, mais assez
+    // pour qu'une dérive prolongée ne laisse pas le joueur dans un monde vide.
+    const drift = player.position.x - state.axisX;
+    state.axisX += Math.sign(drift) *
+      Math.min(Math.abs(drift), CONFIG.axisTrackSpeed * delta);
+    currentAxisX();
+
     // --- distance et détours ---
     state.distance = Math.max(state.distance, state.startZ - player.position.z);
 
-    const lateral = Math.abs(player.position.x - state.startX);
+    const lateral = Math.abs(player.position.x - currentAxisX());
     const far = lateral > CONFIG.detourThreshold;
     if (far && !state.wasFarLateral) state.detours++;
     state.wasFarLateral = far;
@@ -479,6 +1022,12 @@ export function createFogNomad(ctx) {
       }
     }
 
+    // Le visuel du sac suit l'état à chaque image : trois mises à l'échelle,
+    // et plus aucun risque de désynchronisation selon la façon dont le poids
+    // a changé.
+    updateBagVisual();
+
+    spinCrystals(delta);
     updateCollection(delta);
     emit();
   }
@@ -520,6 +1069,7 @@ export function createFogNomad(ctx) {
         spec.worldZ - player.position.z
       );
 
+      if (spec.readyAt !== undefined && state.elapsed < spec.readyAt) continue;
       if (dist < bestDist && canCarry(spec.type)) {
         best = mesh;
         bestDist = dist;
@@ -545,8 +1095,11 @@ export function createFogNomad(ctx) {
 
   function restart() {
     for (const mesh of [...activeResources]) removeResource(mesh);
+    for (const fire of [...activeFires]) removeFire(fire);
     chunkResources.clear();
     activeResources.clear();
+    chunkFires.clear();
+    activeFires.clear();
 
     if (onRestart) onRestart();
     resetRun();
@@ -569,7 +1122,13 @@ export function createFogNomad(ctx) {
       margeBrumeMin: Number.isFinite(state.minFogGap) ? Math.round(state.minFogGap) : null,
       detours: state.detours,
       cause: state.deathCause,
-      valeur: valueCarried()
+      valeur: valueCarried(),
+      cristauxUtilises: state.pulses,
+      feuxAllumes: state.firesLit,
+      margeMax: Math.round(state.maxFogGap),
+      margeMoyenne: state.gapSamples ? Math.round(state.gapSum / state.gapSamples) : null,
+      tempsAuDessus200: +state.timeAbove200.toFixed(1),
+      tempsSous50: +state.timeBelow50.toFixed(1)
     };
 
     try {
@@ -617,6 +1176,11 @@ export function createFogNomad(ctx) {
     canSprint,
     restart,
     dropOne,
+    canLightFire,
+    lightFire,
+    canPulse,
+    usePulse,
+    get fireCount() { return activeFires.size; },
     die,
     weightRatio,
     valueCarried,
@@ -629,6 +1193,14 @@ export function createFogNomad(ctx) {
     get resourceCount() { return activeResources.size; },
     get resourceObjects() { return [...activeResources]; },
     setFogZ: (z) => { state.fogZ = z; },
+    get spawnStats() { return spawnStats; },
+    get axisX() { return currentAxisX(); },
+    resetSpawnStats() {
+      spawnStats.chunksPeuples = 0; spawnStats.chunksVides = 0;
+      spawnStats.generees = 0; spawnStats.detruitesAvecChunk = 0;
+      spawnStats.ramassees = 0; spawnStats.rejetsCouloir = 0;
+      spawnStats.rejetsEau = 0; spawnStats.parType = {};
+    },
     resetRun
   };
 }
