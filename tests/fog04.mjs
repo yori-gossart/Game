@@ -144,10 +144,18 @@ const loin = await H(() => window.HORIZON.bookkeeping);
 ok("jeter: l'objet survit à l'éloignement (chunk encore actif)",
    loin.jetesAuSol === 1, `${loin.jetesAuSol} au sol`);
 
+// La collecte dure 0,6 s de temps de jeu et démarre à portée : on attend
+// qu'elle aboutisse, plutôt que de parier sur une durée réelle fixe.
 await H((c) => window.HORIZON.teleport(c.x, c.z + 1.2), cible);
-await wait(1600);
-const repris = await H(() => ({ ...window.HORIZON.bookkeeping,
-  poids: window.HORIZON.game.weight, sac: window.HORIZON.game.inventory.bois }));
+const repris = await H(async () => {
+  const limite = performance.now() + 8000;
+  while (window.HORIZON.bookkeeping.jetesAuSol > 0 && performance.now() < limite) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return { ...window.HORIZON.bookkeeping,
+           poids: window.HORIZON.game.weight,
+           sac: window.HORIZON.game.inventory.bois };
+});
 ok("jeter: l'objet se récupère", repris.jetesAuSol === 0 && repris.poids === 21,
    `au sol ${repris.jetesAuSol}, poids ${repris.poids}, bois ${repris.sac}`);
 

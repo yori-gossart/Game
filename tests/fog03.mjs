@@ -22,12 +22,24 @@ await p.evaluate(() => localStorage.clear());
 await p.reload({ waitUntil: "load" }); await p.waitForTimeout(2600);
 
 console.log("=== BRUME ===");
+// La vitesse se mesure en temps de JEU, pas en temps réel : `delta` est
+// plafonné à 40 ms par image, donc sous rendu logiciel le temps de jeu avance
+// moins vite que l'horloge. Diviser par l'attente réelle mesurerait la cadence
+// de la machine de test, pas la règle du jeu.
+const avance = await p.evaluate(async () => {
+  const z0 = window.HORIZON.game.fogZ;
+  const t0 = window.HORIZON.game.elapsed;
+  await new Promise((r) => setTimeout(r, 2500));
+  return { unites: z0 - window.HORIZON.game.fogZ,
+           secondes: window.HORIZON.game.elapsed - t0 };
+});
 const fog0 = await p.evaluate(() => window.HORIZON.fogGap);
-await p.waitForTimeout(2500);
-const fog1 = await p.evaluate(() => window.HORIZON.fogGap);
-ok("brume: avance vers le joueur à l'arrêt", fog1 < fog0 - 5, `marge ${fog0.toFixed(0)} -> ${fog1.toFixed(0)}`);
-const fogSpeed = (fog0 - fog1) / 2.5;
-ok("brume: vitesse conforme à la configuration", Math.abs(fogSpeed - 4.6) < 1.2, `${fogSpeed.toFixed(2)} u/s mesuré`);
+ok("brume: avance vers le joueur à l'arrêt", avance.unites > 5,
+   `${avance.unites.toFixed(1)} u en ${avance.secondes.toFixed(2)} s de jeu`);
+const fogSpeed = avance.unites / avance.secondes;
+const attendue = await p.evaluate(() => window.HORIZON.config.fog.speed);
+ok("brume: vitesse conforme à la configuration",
+   Math.abs(fogSpeed - attendue) < 1.2, `${fogSpeed.toFixed(2)} u/s pour ${attendue} configurés`);
 ok("brume: le mur est en scène", await p.evaluate(() => {
   let found = false; return window.HORIZON.objectsInScene > 0 && true; }), "");
 
