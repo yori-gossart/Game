@@ -45,7 +45,7 @@ export const CONFIG = {
     //   4 min     5,93 u/s   pression normale
     //   5 min     6,32 u/s   la marche à vide ne suffit plus
     //   7 min     7,17 u/s   il faut avoir lâché du poids
-    //   9 min+    8,30 u/s   plafond
+    //   9 min+    8,00 u/s   plafond
     //
     // Vitesses du joueur, pour référence : 6,2 u/s à vide, 2,85 u/s à sac
     // plein, 11,16 u/s en sprint. Le plafond passe volontairement AU-DESSUS
@@ -57,7 +57,11 @@ export const CONFIG = {
     pressureRamp: 480,      // secondes pour aller de 0 à 1 sur la rampe
     pressureCurve: 1.25,    // > 1 : montée douce au début, plus franche ensuite
     speedGain: 3.1,         // unités/seconde ajoutées au bout de la rampe
-    speedMax: 8.3,          // plafond dur, jamais dépassé
+    // Plafond dur. Il vaut exactement speed + speedGain : la rampe l'atteint
+    // au bout de pressureDelay + pressureRamp et n'y touche plus. Le laisser
+    // au-dessus (8,3 pour un plateau réel de 8,0) en faisait un réglage mort
+    // qui décrivait mal le comportement — un test l'a relevé.
+    speedMax: 8.0,          // plafond dur, jamais dépassé
     damagePerSecond: 32,    // points de vie par seconde passée dedans
     // Corps de la brume : prune très sombre et saturé, pour trancher avec le
     // ciel pâle et le sol vert de la zone sûre.

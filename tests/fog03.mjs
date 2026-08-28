@@ -34,7 +34,12 @@ const avance = await p.evaluate(async () => {
            secondes: window.HORIZON.game.elapsed - t0 };
 });
 const fog0 = await p.evaluate(() => window.HORIZON.fogGap);
-ok("brume: avance vers le joueur à l'arrêt", avance.unites > 5,
+// Ce qui compte est que la brume gagne du terrain sur un joueur immobile, pas
+// qu'elle parcoure un nombre d'unités fixé d'avance : sous rendu logiciel, le
+// temps de JEU écoulé pendant l'attente dépend de la machine. Un seuil absolu
+// mesurait donc la cadence de la machine de test.
+ok("brume: avance vers le joueur à l'arrêt",
+   avance.unites > 0 && avance.secondes > 0.2,
    `${avance.unites.toFixed(1)} u en ${avance.secondes.toFixed(2)} s de jeu`);
 const fogSpeed = avance.unites / avance.secondes;
 const attendue = await p.evaluate(() => window.HORIZON.config.fog.speed);
