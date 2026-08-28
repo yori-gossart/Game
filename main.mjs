@@ -1754,6 +1754,10 @@ window.HORIZON = {
 
   get chunkKeys() { return [...chunks.keys()]; },
 
+  // La scène elle-même : sert à mesurer le coût marginal d'un élément en le
+  // masquant, plutôt qu'à l'estimer.
+  scene,
+
 
 
   /**
@@ -1807,6 +1811,7 @@ window.HORIZON = {
   resetSpawnStats() { game.resetSpawnStats(); },
   get fogGap() { return game.fogGap; },
   get resourceCount() { return game.resourceCount; },
+  get bookkeeping() { return game.bookkeeping; },
   get bagTier() { return game.bagTier(); },
   get speedFactor() { return game.speedFactor(); },
   get canSprint() { return game.canSprint(); },
@@ -1823,7 +1828,10 @@ window.HORIZON = {
       type: mesh.userData.resource.type,
       x: mesh.userData.resource.worldX,
       z: mesh.userData.resource.worldZ,
-      lateral: Math.abs(mesh.userData.resource.worldX)
+      // L'écart latéral se mesure depuis l'axe de fuite courant, pas depuis
+      // X = 0 : l'axe suit le joueur depuis la 0.4.
+      lateral: Math.abs(mesh.userData.resource.worldX - game.axisX),
+      jete: mesh.userData.resource.jete === true
     }));
   },
 

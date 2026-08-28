@@ -43,6 +43,10 @@ export const CONFIG = {
     // vitesse : la crête composite change de forme sans qu'aucun sommet ne
     // soit recalculé.
     driftSpeed: 1.4,
+    // Rappel vers le centre. La dérive s'équilibre à driftSpeed / driftReturn
+    // unités, soit environ 28 u pour la nappe la plus rapide : assez pour que
+    // la crête change de forme, jamais assez pour découvrir un bord.
+    driftReturn: 0.05,
     breathe: 0.9,           // amplitude du souffle vertical, en unités
     // En dessous de cette marge, l'avertissement visuel monte progressivement.
     warnDistance: 22
@@ -327,7 +331,8 @@ export function createFogNomad(ctx) {
       crest = 0,
       phase = 0,
       edgeStrength = 0,
-      streak = 0.10
+      streak = 0.10,
+      floor = 0
     } = options;
 
     const geometry = new THREE.PlaneGeometry(width, height, 26, 7);
@@ -335,13 +340,12 @@ export function createFogNomad(ctx) {
     const colors = new Float32Array(position.count * 4);
     const base = new THREE.Color(CONFIG.fog.color);
     const edge = new THREE.Color(CONFIG.fog.edgeColor);
-    const sink = CONFIG.fog.sink;
 
     for (let i = 0; i < position.count; i++) {
       const x = position.getX(i);
       // Hauteur au-dessus du sol, en unités monde. La partie enterrée sort
       // négative et reste pleinement opaque, ce qui est exactement voulu.
-      const y = position.getY(i) + height / 2 - sink;
+      const y = position.getY(i) + height / 2 + floor;
 
       // Deux ondes de périodes incommensurables : la crête ne se répète pas
       // visiblement sur la largeur du mur.
@@ -381,6 +385,12 @@ export function createFogNomad(ctx) {
     opacity: CONFIG.fog.opacity,
     depthWrite: false,
     side: THREE.DoubleSide,
+    // Un matériau transparent double face est rendu en DEUX passes par
+    // Three.js (faces arrière puis faces avant) : chaque nappe coûtait deux
+    // appels de rendu au lieu d'un. Les nappes sont des plans sans repli sur
+    // eux-mêmes : une seule passe donne exactement la même image.
+    // Mesuré : 8 appels pour quatre nappes, 4 après.
+    forceSinglePass: true,
     fog: false
   });
 
@@ -392,26 +402,34 @@ export function createFogNomad(ctx) {
   //
   // `renderOrder` croît vers le joueur pour que le mélange alpha se fasse de
   // l'arrière vers l'avant, indépendamment du tri automatique.
+  //
+  // `floor` est la hauteur, au-dessus du sol, où commence le plan. Les deux
+  // nappes arrière s'arrêtent au niveau du sol au lieu d'être enterrées :
+  // sous cette limite la nappe centrale est totalement opaque, donc les
+  // fragments dessinés là étaient invisibles. C'est du remplissage gagné pour
+  // exactement la même image — un GPU mobile est limité par le remplissage
+  // bien avant de l'être par le nombre d'appels.
   const FOG_LAYERS = [
     // Fond : la plus haute, presque opaque — c'est elle qui bouche l'horizon.
     { z: 30, crestY: 27, soft: 13, baseAlpha: 0.86, crest: 0.17,
-      edge: 0.08, streak: 0.07, drift: 0.55, order: 3 },
+      edge: 0.08, streak: 0.07, drift: 0.55, order: 3, floor: 0 },
     { z: 14, crestY: 21, soft: 10, baseAlpha: 0.94, crest: 0.25,
-      edge: 0.16, streak: 0.10, drift: -0.85, order: 4 },
-    // Corps : le mur proprement dit, opaque au niveau des yeux.
+      edge: 0.16, streak: 0.10, drift: -0.85, order: 4, floor: 0 },
+    // Corps : le mur proprement dit, opaque au niveau des yeux. Lui reste
+    // enterré : c'est lui qui doit couvrir les creux du terrain.
     { z: 0, crestY: 15, soft: 8, baseAlpha: 1.00, crest: 0.33,
-      edge: 0.30, streak: 0.12, drift: 1.00, order: 5 },
+      edge: 0.30, streak: 0.12, drift: 1.00, order: 5, floor: -CONFIG.fog.sink },
     // Avant-garde : basse et translucide. Elle déborde vers le joueur, avale
     // les objets progressivement au lieu de les couper net, et donne au front
     // une bordure claire lisible même quand le mur remplit l'écran.
     { z: -8, crestY: 7, soft: 5, baseAlpha: 0.55, crest: 0.46,
-      edge: 0.62, streak: 0.16, drift: -1.35, order: 6 }
+      edge: 0.62, streak: 0.16, drift: -1.35, order: 6, floor: -CONFIG.fog.sink }
   ];
 
   const fogLayers = FOG_LAYERS.map((spec, index) => {
-    // Le plan doit contenir la crête la plus haute possible, plus la partie
-    // enterrée : la hauteur se déduit, elle ne se règle pas à la main.
-    const height = CONFIG.fog.sink + spec.crestY * (1 + spec.crest) + 3;
+    // Le plan doit contenir la crête la plus haute possible : la hauteur se
+    // déduit du profil, elle ne se règle pas à la main.
+    const height = spec.crestY * (1 + spec.crest) + 3 - spec.floor;
 
     const mesh = new THREE.Mesh(
       buildFogWall(CONFIG.fog.width, height, {
@@ -421,12 +439,13 @@ export function createFogNomad(ctx) {
         crest: spec.crest,
         phase: index * 1.9,
         edgeStrength: spec.edge,
-        streak: spec.streak
+        streak: spec.streak,
+        floor: spec.floor
       }),
       fogMaterial
     );
 
-    mesh.position.set(0, height / 2 - CONFIG.fog.sink, spec.z);
+    mesh.position.set(0, spec.floor + height / 2, spec.z);
     mesh.renderOrder = spec.order;
     mesh.frustumCulled = false;
     fogGroup.add(mesh);
@@ -446,10 +465,14 @@ export function createFogNomad(ctx) {
   function updateFogVisual(delta) {
     for (const layer of fogLayers) {
       layer.phase += delta;
-      layer.mesh.position.x += layer.drift * CONFIG.fog.driftSpeed * delta;
 
-      // Recentrage discret : la dérive ne doit pas s'accumuler sans fin.
-      layer.mesh.position.x *= 0.999;
+      // Dérive amortie, intégrée sur le temps et non sur l'image : un
+      // amortissement par image donnerait une amplitude différente à 30 et à
+      // 60 FPS, donc une brume qui ne bouge pas pareil selon l'appareil.
+      const x = layer.mesh.position.x;
+      layer.mesh.position.x = x +
+        (layer.drift * CONFIG.fog.driftSpeed - x * CONFIG.fog.driftReturn) * delta;
+
       layer.mesh.position.y = layer.baseY +
         Math.sin(layer.phase * 0.5) * CONFIG.fog.breathe;
     }
@@ -749,7 +772,8 @@ export function createFogNomad(ctx) {
       const spread = CONFIG.drop.scatter;
       const worldX = player.position.x + (Math.random() - 0.5) * spread * 2;
       const worldZ = player.position.z + (Math.random() - 0.5) * spread * 2;
-      spawnResourceMesh(entry.group, entry.key, type, worldX, worldZ, CONFIG.drop.rearmDelay);
+      spawnResourceMesh(entry.group, entry.key, type, worldX, worldZ,
+                        CONFIG.drop.rearmDelay, true);
     }
 
     return true;
@@ -759,7 +783,7 @@ export function createFogNomad(ctx) {
    * Pose une ressource dans un chunk. Sert à la génération procédurale comme
    * aux objets jetés : même rendu, même cycle de vie, même ramassage.
    */
-  function spawnResourceMesh(group, key, type, worldX, worldZ, delay = 0) {
+  function spawnResourceMesh(group, key, type, worldX, worldZ, delay = 0, jete = false) {
     const spec = CONFIG.resources[type];
     const y = terrainHeight(worldX, worldZ);
     const mesh = new THREE.Mesh(resourceGeometries[type], resourceMaterials[type]);
@@ -769,7 +793,8 @@ export function createFogNomad(ctx) {
     mesh.userData.kind = "ressources";
     mesh.userData.resource = {
       type, worldX, worldZ, baseY: y + spec.size, chunkKey: key,
-      readyAt: state.elapsed + delay
+      readyAt: state.elapsed + delay,
+      jete
     };
 
     group.add(mesh);
@@ -1192,6 +1217,22 @@ export function createFogNomad(ctx) {
     get fogGap() { return state.fogZ - player.position.z; },
     get resourceCount() { return activeResources.size; },
     get resourceObjects() { return [...activeResources]; },
+    // Ce qui doit rester borné d'une run à l'autre : les deux registres par
+    // chunk, pas seulement les objets qu'ils contiennent. Un registre qui
+    // grossit sans fin est une fuite même si la scène reste propre.
+    get bookkeeping() {
+      let listees = 0;
+      for (const list of chunkResources.values()) listees += list.length;
+      return {
+        chunksAvecRessources: chunkResources.size,
+        ressourcesListees: listees,
+        ressourcesActives: activeResources.size,
+        chunksAvecFeu: chunkFires.size,
+        feuxActifs: activeFires.size,
+        jetesAuSol: [...activeResources]
+          .filter((m) => m.userData.resource.jete).length
+      };
+    },
     setFogZ: (z) => { state.fogZ = z; },
     get spawnStats() { return spawnStats; },
     get axisX() { return currentAxisX(); },

@@ -1,12 +1,36 @@
-# Fog Nomad — Core Test 0.3
+# Fog Nomad — Vertical Slice 0.4
 
 Prototype de jeu mobile bâti sur le moteur **Horizon 0.2**. Une brume mortelle
 descend derrière le joueur ; il faut avancer, ramasser ce qu'on peut porter, et
 jeter ce qui ralentit.
 
-- Règles, paramètres, architecture, tests et limites : **`FOG_NOMAD_CORE_TEST_0.3.md`**
+- Tranche verticale courante — correctifs, deux actions, passe graphique,
+  mesures : **`FOG_NOMAD_VERTICAL_SLICE_0.4.md`**
+- Règles, paramètres, architecture et équilibrage d'origine : **`FOG_NOMAD_CORE_TEST_0.3.md`**
 - Résultats de jeu réels : **`CORE_TEST_RESULTS.md`**
 - Audit technique du moteur : **`AUDIT_PERFORMANCE_BUGS_0.2.md`**
+
+## Le jeu
+
+Un mur de brume descend l'axe Z à vitesse constante. Y rester coûte de la vie.
+
+Trois ressources jonchent le monde : le **bois** est sur l'axe de fuite, la
+**pierre** un peu de côté, le **cristal** nettement à l'écart. Plus une
+ressource est précieuse, plus le détour est long — et la brume ne s'arrête pas
+pendant ce temps.
+
+Tout ce qu'on ramasse pèse, et le poids ralentit. Au-delà de 58 % de charge, la
+brume gagne du terrain. On peut jeter un objet : il tombe au sol, et reste
+ramassable tant que son chunk vit.
+
+Deux usages, en plus du score :
+
+| Action | Coût | Effet |
+| --- | --- | --- |
+| Impulsion de cristal | 1 cristal | repousse le mur de 42 unités |
+| Feu de répit | 2 bois + 1 pierre | 18 s : brume à 16 % de sa vitesse, souffle rendu |
+
+La brume ne s'arrête jamais complètement.
 
 Le moteur reste celui décrit ci-dessous : un petit monde 3D procédural généré
 par morceaux autour du joueur.
@@ -19,14 +43,16 @@ Aucun backend, aucun compte, aucune API externe : le jeu est un site statique de
 - palette et biomes distincts, **fondus entre eux** au lieu d'être découpés au chunk ;
 - eau ;
 - soleil visible et profondeur atmosphérique ;
-- personnage avec sac à dos ;
+- personnage avec sac à dos dont le volume suit la charge, en cinq paliers ;
+- ciel en dégradé et mur de brume en quatre nappes à crête ondulée ;
 - animation marche / course, et respiration à l'arrêt ;
 - joystick tactile ;
 - caméra orientable en glissant sur la partie droite de l'écran (rotation **et** inclinaison) ;
 - terrain procédural en chunks ;
 - création/destruction dynamique des chunks ;
 - arbres, buissons, rochers et bouquets de fleurs procéduraux ;
-- sauvegarde locale de la seed, de la position, de l'orientation caméra et des chunks découverts ;
+- sauvegarde locale de la seed et des chunks découverts — la position n'est
+  **pas** restaurée : elle remettrait la brume à distance de sécurité ;
 - adaptation automatique de la résolution si les FPS baissent ;
 - Three.js 0.185.1, servi depuis le dépôt (`vendor/three/`).
 
@@ -42,7 +68,16 @@ Trois choix portent l'essentiel du budget :
 - **Matériaux et géométries mutualisés.** Un seul matériau de terrain (la couleur de biome passe par les couleurs de sommets), un seul matériau de feuillage (la teinte passe par la couleur d'instance). Les géométries d'arbre et de rocher sont créées une fois pour tout le jeu ; celle de la fleur sert de patron recopié dans la géométrie fusionnée de chaque chunk.
 - **Génération étalée.** Franchir une frontière de chunk demande jusqu'à 5 nouveaux chunks ; ils sont construits deux par image via une file d'attente, ce qui évite l'à-coup.
 
-Ordre de grandeur mesuré en exploration, sur un rendu 412 × 915 : **20 à 35 appels de rendu, 3 000 à 7 000 triangles, aucune texture, 5 programmes de shader**.
+Ordre de grandeur mesuré en exploration, sur un rendu 412 × 915 : **32 à 44 appels de rendu, 4 800 à 8 800 triangles, aucune texture, 7 programmes de shader**.
+
+Deux points appris en mesurant la brume de la 0.4, valables partout ailleurs :
+
+- un matériau **transparent et double face** est rendu en deux passes par
+  Three.js, donc coûte deux appels de rendu par objet. `forceSinglePass: true`
+  le ramène à un quand la géométrie ne se replie pas sur elle-même ;
+- ce qui coûte cher dans un grand plan en fondu alpha n'est pas l'appel mais le
+  **remplissage** : les nappes de brume masquées par une nappe opaque ont été
+  raccourcies au niveau du sol, pour une image identique.
 
 Si les FPS descendent sous 38, la densité de pixels est abaissée par paliers (1.35 → 1.15 → 1.0) avant toute réduction de la qualité visuelle ; elle remonte d'elle-même au-delà de 52 FPS. Le plancher est un pixel CSS : descendre en dessous rendait l'image visiblement en escalier sur les écrans à forte densité.
 
@@ -86,10 +121,18 @@ C'est cet outil qui a permis d'isoler un artefact d'affichage impossible à repr
 | Jeter un objet | croix sur la puce du sac | — |
 | Nouveau monde | bouton NOUVEAU | — |
 
-Les tests se lancent avec `node tests/fog03.mjs` — voir `tests/README.md`.
+| Impulsion de cristal | bouton, visible seulement si un cristal est porté | — |
+| Feu de répit | bouton, visible seulement si la matière est portée | — |
+
+Les tests se lancent avec `node tests/fog04.mjs` — voir `tests/README.md`.
 
 ## Suite
 
 Rien ne s'ajoute avant que le Core Test ait répondu à ses cinq questions dans
 `CORE_TEST_RESULTS.md`. Si le compromis central ne fonctionne pas, aucune
 fonctionnalité supplémentaire ne le fera fonctionner.
+
+La 0.4 est une tranche verticale **interne** : elle lève les trois obstacles
+qui empêchaient de poser ces questions honnêtement — un monde qui se vidait,
+des objets jetés introuvables, des ressources sans usage. Elle ne les remplace
+pas.

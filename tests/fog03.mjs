@@ -36,10 +36,25 @@ await p.evaluate(() => { window.HORIZON.restartRun(); window.HORIZON.setFogGap(-
 await p.waitForTimeout(900);
 const hurt = await p.evaluate(() => window.HORIZON.game.health);
 ok("dégâts: la vie baisse dans la brume", hurt < 100, `vie ${hurt.toFixed(0)}`);
-await p.waitForTimeout(3200);
+// On attend la MORT, pas une durée. `delta` est plafonné à 40 ms par image :
+// sous rendu logiciel le temps de jeu avance moins vite que le temps réel, et
+// une attente fixe transformerait la cadence de la machine de test en verdict.
+// Ce qui est vérifié reste la règle : ~3 s de brume tuent depuis 100 de vie.
+const mort = await p.evaluate(async () => {
+  const debut = window.HORIZON.game.elapsed;
+  const limite = performance.now() + 15000;
+  while (!window.HORIZON.game.dead && performance.now() < limite) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return { dead: window.HORIZON.game.dead,
+           secondes: +(window.HORIZON.game.elapsed - debut).toFixed(2) };
+});
+await p.waitForTimeout(300);
 const dead = await p.evaluate(() => ({ dead: window.HORIZON.game.dead,
   cause: window.HORIZON.game.deathCause, ecran: !document.querySelector("#death").hidden }));
 ok("mort: déclenchée après séjour prolongé", dead.dead, dead.cause);
+ok("mort: survient en ~3 s de brume", mort.secondes > 2 && mort.secondes < 4.5,
+   `${mort.secondes} s de jeu`);
 ok("mort: écran de fin affiché", dead.ecran);
 ok("mort: statistiques listées", await p.evaluate(() =>
   document.querySelectorAll("#death-stats dt").length >= 6));
@@ -68,8 +83,17 @@ const moy = (a) => a.reduce((x,y)=>x+y,0)/a.length;
 const mBois = moy(byType.bois||[0]), mPierre = moy(byType.pierre||[0]), mCristal = moy(byType.cristal||[0]);
 ok("ressources: les rares sont plus latérales", mCristal > mPierre && mPierre > mBois,
    `bois ${mBois.toFixed(0)} < pierre ${mPierre.toFixed(0)} < cristal ${mCristal.toFixed(0)}`);
-ok("ressources: aucun cristal dans le couloir central",
-   (byType.cristal||[]).every(l => l >= 30), `min ${Math.min(...(byType.cristal||[99])).toFixed(0)}`);
+// 0.4 a remplacé les bandes latérales strictes par une pondération gaussienne
+// continue : les bandes fixes vidaient le monde après ~40 chunks en diagonale.
+// Un cristal peut donc apparaître près de l'axe, mais cela doit rester rare —
+// c'est la rareté qui fait le détour, pas une frontière.
+{
+  const cristaux = byType.cristal || [];
+  const proches = cristaux.filter(l => l < 30).length;
+  const part = cristaux.length ? proches / cristaux.length : 0;
+  ok("ressources: le cristal reste rare dans le couloir central",
+     part <= 0.25, `${proches}/${cristaux.length} sous 30 u (${(part*100).toFixed(0)} %)`);
+}
 
 console.log("\n=== COLLECTE ET POIDS ===");
 const pick = await p.evaluate(async () => {
