@@ -208,11 +208,16 @@ let cameraYaw = 0;
 let cameraPitch = 0.5;
 let walkTime = 0;
 let idleTime = 0;
+// Horloge de scène, pour les animations d'ambiance qui ne dépendent ni de la
+// run ni du joueur (balises, respiration de la brume).
+let elapsedTotal = 0;
 
 const CAMERA_PITCH_MIN = 0.12;
 const CAMERA_PITCH_MAX = 0.98;
 
 const chunks = new Map();
+// Cœurs de balise en scène : suivis pour tourner, oubliés avec leur chunk.
+const balises = new Set();
 const discovered = new Set();
 const buildQueue = [];
 
@@ -548,6 +553,239 @@ const grassGeometry = (() => {
   for (const g of parts) g.dispose();
   return faceted(merged);
 })();
+
+// ---------------------------------------------------------------------------
+// Narration environnementale.
+//
+// Le monde doit poser des questions avant qu'un scénario y réponde. Il n'y a
+// donc ni texte, ni quête, ni PNJ : seulement des traces. Quelqu'un a campé
+// ici. Quelqu'un a bâti ça. Quelque chose fonctionne encore, et on ne sait pas
+// pourquoi.
+//
+// Quatre catégories, toutes RARES : la fréquence est ce qui fait la question.
+// Un camp abandonné dans chaque chunk n'est plus un camp abandonné, c'est du
+// décor. Les tirages ci-dessous donnent une structure tous les ~14 chunks.
+//
+// Chaque structure est une géométrie fusionnée unique, construite une fois
+// pour tout le jeu et instanciée par chunk : une structure coûte un appel de
+// rendu, et un chunk sans structure n'en coûte aucun.
+// ---------------------------------------------------------------------------
+
+const structureMaterial = contaminable(new THREE.MeshLambertMaterial({ color: 0x6e6656 }));
+const structureBoisMaterial = contaminable(new THREE.MeshLambertMaterial({ color: 0x4c3a29 }));
+
+// La balise luit faiblement : c'est le seul objet du monde qui semble encore
+// alimenté. Volontairement inexpliqué.
+const baliseMaterial = new THREE.MeshLambertMaterial({
+  color: 0x7fd8cf,
+  emissive: 0x2f8f86,
+  emissiveIntensity: 1.0
+});
+
+/** Camp abandonné : un feu mort, deux sacs, une perche. Quelqu'un a dormi là. */
+const campGeometry = (() => {
+  const parts = [];
+
+  // Cercle de pierres autour d'un foyer éteint.
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2;
+    const g = new THREE.DodecahedronGeometry(0.17, 0);
+    g.scale(1, 0.7, 1);
+    g.translate(Math.cos(a) * 0.62, 0.1, Math.sin(a) * 0.62);
+    parts.push(g);
+  }
+
+  // Bois calciné, retombé en croix.
+  for (let i = 0; i < 3; i++) {
+    const g = new THREE.CylinderGeometry(0.045, 0.045, 0.75, 4);
+    g.rotateZ(Math.PI / 2 - 0.25);
+    g.rotateY(i * 1.15);
+    g.translate(0, 0.09, 0);
+    parts.push(g);
+  }
+
+  // Deux ballots laissés sur place.
+  const ballot = new THREE.BoxGeometry(0.42, 0.3, 0.34);
+  ballot.translate(1.15, 0.15, 0.3);
+  parts.push(ballot);
+
+  const ballot2 = new THREE.BoxGeometry(0.3, 0.26, 0.3);
+  ballot2.rotateY(0.6);
+  ballot2.translate(-0.95, 0.13, -0.55);
+  parts.push(ballot2);
+
+  // Une perche plantée, penchée.
+  const perche = new THREE.CylinderGeometry(0.04, 0.05, 1.9, 4);
+  perche.translate(0, 0.95, 0);
+  perche.rotateZ(0.22);
+  perche.translate(-1.3, 0, 0.7);
+  parts.push(perche);
+
+  const merged = mergeGeometries(parts);
+  for (const g of parts) g.dispose();
+  return faceted(merged);
+})();
+
+/** Ruine : un pan de mur, une arche brisée, des pierres tombées. */
+const ruineGeometry = (() => {
+  const parts = [];
+
+  const mur = new THREE.BoxGeometry(3.4, 2.5, 0.5);
+  mur.translate(0, 1.25, 0);
+  parts.push(mur);
+
+  // Brèche : deux blocs qui poursuivent le mur, plus bas, avec un manque.
+  const suite = new THREE.BoxGeometry(1.5, 1.4, 0.5);
+  suite.translate(2.7, 0.7, 0);
+  parts.push(suite);
+
+  const moignon = new THREE.BoxGeometry(0.8, 0.7, 0.5);
+  moignon.translate(-2.35, 0.35, 0);
+  parts.push(moignon);
+
+  // Amorce d'arche : deux montants et un claveau resté en place.
+  const montantA = new THREE.BoxGeometry(0.42, 2.1, 0.44);
+  montantA.translate(-0.85, 1.05, 2.3);
+  parts.push(montantA);
+
+  const montantB = new THREE.BoxGeometry(0.42, 1.6, 0.44);
+  montantB.translate(0.85, 0.8, 2.3);
+  parts.push(montantB);
+
+  const claveau = new THREE.BoxGeometry(0.9, 0.4, 0.44);
+  claveau.rotateZ(-0.5);
+  claveau.translate(-0.6, 2.25, 2.3);
+  parts.push(claveau);
+
+  // Pierres tombées au pied.
+  for (let i = 0; i < 5; i++) {
+    const g = new THREE.DodecahedronGeometry(0.28, 0);
+    g.scale(1, 0.6, 1);
+    g.rotateY(i * 1.3);
+    g.translate(-1.6 + i * 0.9, 0.14, 1.15 + (i % 2) * 0.5);
+    parts.push(g);
+  }
+
+  const merged = mergeGeometries(parts);
+  for (const g of parts) g.dispose();
+  return faceted(merged);
+})();
+
+/** Socle de balise : la partie inerte, en pierre. */
+const baliseSocleGeometry = (() => {
+  const parts = [];
+
+  const base = new THREE.CylinderGeometry(0.75, 0.95, 0.45, 6);
+  base.translate(0, 0.22, 0);
+  parts.push(base);
+
+  const fut = new THREE.CylinderGeometry(0.26, 0.36, 2.3, 6);
+  fut.translate(0, 1.6, 0);
+  parts.push(fut);
+
+  // Trois contreforts inclinés : la chose a été bâtie pour durer.
+  for (let i = 0; i < 3; i++) {
+    const g = new THREE.BoxGeometry(0.17, 1.3, 0.17);
+    g.translate(0, 0.65, 0);
+    g.rotateZ(0.3);
+    g.rotateY((i / 3) * Math.PI * 2);
+    g.translate(0, 0.3, 0);
+    parts.push(g);
+  }
+
+  const merged = mergeGeometries(parts);
+  for (const g of parts) g.dispose();
+  return faceted(merged);
+})();
+
+/** Cœur de balise : l'octaèdre lumineux, qui tourne lentement. */
+const baliseCoeurGeometry = faceted(new THREE.OctahedronGeometry(0.42, 0));
+
+/**
+ * Monument : la structure visible de loin, celle qui donne une direction.
+ * Une arche haute posée sur un tertre, avec un anneau suspendu.
+ */
+const monumentGeometry = (() => {
+  const parts = [];
+
+  const tertre = new THREE.CylinderGeometry(4.2, 5.6, 1.4, 8);
+  tertre.translate(0, 0.7, 0);
+  parts.push(tertre);
+
+  // Deux piliers massifs, légèrement inclinés l'un vers l'autre.
+  for (const s of [-1, 1]) {
+    const pilier = new THREE.BoxGeometry(1.1, 9.5, 1.1);
+    pilier.translate(0, 4.75, 0);
+    pilier.rotateZ(s * 0.055);
+    pilier.translate(s * 2.5, 1.3, 0);
+    parts.push(pilier);
+  }
+
+  // Linteau.
+  const linteau = new THREE.BoxGeometry(6.6, 1.2, 1.3);
+  linteau.translate(0, 10.9, 0);
+  parts.push(linteau);
+
+  // Anneau suspendu sous le linteau : huit segments, pas un tore coûteux.
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const g = new THREE.BoxGeometry(0.85, 0.26, 0.26);
+    g.translate(1.5, 0, 0);
+    g.rotateZ(a);
+    g.translate(0, 8.7, 0);
+    parts.push(g);
+  }
+
+  const merged = mergeGeometries(parts);
+  for (const g of parts) g.dispose();
+  return faceted(merged);
+})();
+
+/**
+ * Arbre gigantesque : l'autre repère lointain. Un tronc énorme et trois
+ * couronnes étagées, à une échelle qui n'appartient à aucune autre végétation.
+ */
+// Deux géométries et non une : le tronc est en bois, le feuillage en vert. Les
+// fusionner sous un seul matériau donnait un arbre géant entièrement marron.
+const grandArbreTroncGeometry = (() => {
+  const parts = [];
+
+  const tronc = new THREE.CylinderGeometry(0.85, 1.9, 9, 7);
+  tronc.translate(0, 4.5, 0);
+  parts.push(tronc);
+
+  for (let i = 0; i < 4; i++) {
+    const g = new THREE.CylinderGeometry(0.16, 0.3, 3.2, 4);
+    g.translate(0, 1.6, 0);
+    g.rotateZ(0.75);
+    g.rotateY((i / 4) * Math.PI * 2 + 0.4);
+    g.translate(0, 6.4, 0);
+    parts.push(g);
+  }
+
+  const merged = mergeGeometries(parts);
+  for (const g of parts) g.dispose();
+  return faceted(merged);
+})();
+
+const grandArbreFeuillageGeometry = (() => {
+  const couronnes = [
+    new THREE.ConeGeometry(5.2, 4.6, 7),
+    new THREE.ConeGeometry(3.9, 3.8, 7),
+    new THREE.ConeGeometry(2.4, 3, 7)
+  ];
+  couronnes[0].translate(0, 10.2, 0);
+  couronnes[1].translate(0, 12.6, 0);
+  couronnes[2].translate(0, 14.7, 0);
+
+  const merged = mergeGeometries(couronnes);
+  for (const g of couronnes) g.dispose();
+  return faceted(merged);
+})();
+
+// Feuillage des grands arbres : une teinte propre, plus sombre que la
+// végétation courante — un arbre de cette taille a vu passer autre chose.
+const grandArbreMaterial = contaminable(new THREE.MeshLambertMaterial({ color: 0x2f5540 }));
 
 const rockGeometry = faceted(new THREE.DodecahedronGeometry(0.5, 0));
 
@@ -886,6 +1124,48 @@ function buildInstanced(geometry, material, items, applyTransform, colorOf) {
   return mesh;
 }
 
+/**
+ * Structures d'un chunk : au plus une, et rarement.
+ *
+ * Le tirage se fait sur les coordonnées du chunk, donc il est stable : la même
+ * ruine réapparaît au même endroit après un rechargement, et deux joueurs de
+ * la même seed voient le même monde.
+ *
+ * Les repères lointains (monument, grand arbre) ne sont PAS tirés par chunk :
+ * ils le sont sur une grille grossière de LANDMARK_GRID chunks. Sans cela ils
+ * apparaîtraient et disparaîtraient au gré du streaming, alors que leur raison
+ * d'être est justement d'être visés de loin et d'orienter une traversée.
+ */
+const LANDMARK_GRID = 6;      // un repère candidat toutes les 6×6 cases de chunk
+const LANDMARK_CHANCE = 0.42; // ... et seulement une case candidate sur deux
+
+function structureAt(cx, cz) {
+  // --- repère lointain ---------------------------------------------------
+  const gx = Math.floor(cx / LANDMARK_GRID);
+  const gz = Math.floor(cz / LANDMARK_GRID);
+
+  if (random01(gx * 313, gz * 571, 401) < LANDMARK_CHANCE) {
+    // La case candidate désigne un chunk précis en son sein : le repère n'est
+    // pas au coin de la grille, sinon l'alignement se verrait.
+    const dx = Math.floor(random01(gx * 17, gz * 29, 403) * LANDMARK_GRID);
+    const dz = Math.floor(random01(gx * 41, gz * 11, 405) * LANDMARK_GRID);
+
+    if (cx - gx * LANDMARK_GRID === dx && cz - gz * LANDMARK_GRID === dz) {
+      return random01(gx, gz, 407) < 0.5 ? "monument" : "grandarbre";
+    }
+  }
+
+  // --- petite structure ---------------------------------------------------
+  // ~7 % des chunks, soit une trouvaille toutes les quatorze zones environ.
+  const tirage = random01(cx * 89, cz * 127, 409);
+  if (tirage > 0.07) return null;
+
+  const type = random01(cx * 149, cz * 97, 411);
+  if (type < 0.42) return "camp";
+  if (type < 0.78) return "ruine";
+  return "balise";
+}
+
 function createChunk(cx, cz) {
   const key = `${cx},${cz}`;
   if (chunks.has(key)) return;
@@ -1219,6 +1499,7 @@ function createChunk(cx, cz) {
   }
 
   addFlowers(group, flowers);
+  addStructure(group, cx, cz, centerX, centerZ);
   game.populateChunk(group, key, cx, cz, centerX, centerZ, random01);
 
   scene.add(group);
@@ -1320,10 +1601,88 @@ function addFlowers(group, flowers) {
   group.add(patch);
 }
 
+/**
+ * Pose la structure d'un chunk, s'il en a une.
+ *
+ * Les structures partagent leurs géométries avec tout le jeu (aucune n'est
+ * propre au chunk), donc `disposeChunk` ne doit surtout pas les libérer : elles
+ * ne portent pas `ownedGeometry`.
+ */
+function addStructure(group, cx, cz, centerX, centerZ) {
+  const type = structureAt(cx, cz);
+  if (!type) return;
+
+  // Placement dans le chunk, à l'écart du bord pour que rien ne chevauche la
+  // frontière et ne se retrouve coupé quand le chunk voisin est déchargé.
+  const localX = (random01(cx * 7, cz * 13, 413) - 0.5) * (CHUNK_SIZE - 14);
+  const localZ = (random01(cx * 19, cz * 23, 415) - 0.5) * (CHUNK_SIZE - 14);
+  const worldX = centerX + localX;
+  const worldZ = centerZ + localZ;
+  const y = terrainHeight(worldX, worldZ);
+
+  // Rien ne se construit sous l'eau.
+  if (y < -1.8) return;
+
+  const rotation = random01(cx * 31, cz * 37, 417) * Math.PI * 2;
+
+  const poser = (geometry, material, echelle = 1, enfonce = 0) => {
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(localX, y - enfonce, localZ);
+    mesh.rotation.y = rotation;
+    mesh.scale.setScalar(echelle);
+    mesh.userData.kind = "structures";
+    group.add(mesh);
+    return mesh;
+  };
+
+  if (type === "camp") {
+    poser(campGeometry, structureBoisMaterial,
+          0.9 + random01(cx, cz, 419) * 0.3);
+    return;
+  }
+
+  if (type === "ruine") {
+    // Enfoncée de quelques dizaines de centimètres : une ruine est reprise
+    // par le sol, elle ne se pose pas dessus.
+    poser(ruineGeometry, structureMaterial,
+          0.85 + random01(cx, cz, 421) * 0.5, 0.35);
+    return;
+  }
+
+  if (type === "balise") {
+    poser(baliseSocleGeometry, structureMaterial, 1, 0.15);
+
+    // Le cœur est suivi image par image pour tourner : il est enregistré
+    // à part, et disparaît avec son chunk comme le reste.
+    const coeur = poser(baliseCoeurGeometry, baliseMaterial, 1);
+    coeur.position.y = y + 2.95;
+    coeur.userData.balise = true;
+    balises.add(coeur);
+    return;
+  }
+
+  if (type === "monument") {
+    poser(monumentGeometry, structureMaterial,
+          1 + random01(cx, cz, 423) * 0.35, 0.6);
+    return;
+  }
+
+  if (type === "grandarbre") {
+    const echelle = 0.9 + random01(cx, cz, 425) * 0.4;
+    poser(grandArbreTroncGeometry, trunkMaterial, echelle);
+    poser(grandArbreFeuillageGeometry, grandArbreMaterial, echelle);
+    return;
+  }
+}
+
 function disposeChunk(group) {
   scene.remove(group);
 
   group.traverse((object) => {
+    // Un cœur de balise cesse d'être animé quand son chunk part : sans cela
+    // le registre grossirait indéfiniment au fil d'une longue run.
+    if (object.userData?.balise) balises.delete(object);
+
     // Seules les géométries propres au chunk sont libérées : les géométries
     // d'arbres, rochers et fleurs sont mutualisées entre tous les chunks.
     if (object.userData?.ownedGeometry && object.geometry) {
@@ -1971,8 +2330,18 @@ function animate() {
   skyDome.position.copy(camera.position);
   skyDome.scale.setScalar(CAMERA_FAR * 0.92);
 
+  elapsedTotal += delta;
+
   // Une seule écriture par image, partagée par tous les matériaux du monde.
   contamination.fogZ.value = game.state.fogZ;
+
+  // Les balises tournent lentement et respirent : c'est le seul mouvement
+  // artificiel du monde, et la seule chose qui a l'air encore alimentée.
+  for (const coeur of balises) {
+    coeur.rotation.y += delta * 0.55;
+    coeur.rotation.x = Math.sin(elapsedTotal * 0.7) * 0.12;
+    coeur.scale.setScalar(1 + Math.sin(elapsedTotal * 1.6) * 0.07);
+  }
 
   sun.position.set(
     player.position.x + SUN_OFFSET.x,
