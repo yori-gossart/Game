@@ -410,7 +410,18 @@ La 0.4 part en **préversion Vercel uniquement** :
 https://horizon-proto-git-fog-nomad-vertical-slice-04-nutricyclev01a.vercel.app/
 ```
 
-État `READY`, commit `0da7dae`, vérifié en récupérant la page servie.
+État `READY`, commit `c059c1b`.
+
+**Ce qui a été vérifié sur le déploiement**, et comment : la page servie et le
+module `fognomad-ui.mjs` ont été récupérés depuis la préversion et comparés aux
+fichiers du dépôt — identiques. Le projet est un site statique sans étape de
+build : ce qui est servi est le commit.
+
+**Ce qui n'a pas pu l'être** : la politique réseau de l'environnement de
+développement refuse les connexions sortantes vers ces hôtes depuis un
+navigateur. Les 166 vérifications ont donc été exécutées contre un serveur
+local servant le même commit, **pas contre l'URL déployée**. C'est une limite
+de l'environnement, pas un résultat.
 
 **La production n'est pas touchée.** Un point à corriger dans la lecture
 initiale : `horizon-proto-ten.vercel.app` ne sert pas la 0.3 mais toujours
