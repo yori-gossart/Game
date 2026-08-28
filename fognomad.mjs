@@ -22,8 +22,42 @@ export const CONFIG = {
     // 4.6 place la charge d'équilibre à 58 % : au-delà, la brume gagne du
     // terrain. À vide le joueur gagne 1.6 u/s, à sac plein il perd 1.75 u/s et
     // se fait rattraper en 33 s depuis la marge initiale.
-    speed: 4.6,             // unités/seconde, constante pour le Core Test
-    acceleration: 0,        // réservé : 0 = vitesse constante
+    // Vitesse de départ, volontairement plus clémente que les 4,6 de la 0.4 :
+    // c'est la montée en pression qui borne la run, plus la vitesse initiale.
+    speed: 4.9,             // unités/seconde au début de la run
+    // --- Pression temporelle (0.5) -----------------------------------------
+    // La 0.4 avançait à vitesse constante : un joueur prudent gardait +1,6 u/s
+    // indéfiniment et n'était jamais rattrapé. La run ne se terminait que par
+    // avidité ou par lassitude.
+    //
+    // La correction n'est PAS un rappel élastique sur la distance joueur/brume.
+    // Un tel rappel punit le bon jeu et se sent immédiatement comme une
+    // triche. La pression dépend donc UNIQUEMENT du temps écoulé depuis le
+    // début de la run — jamais de la position du joueur, de sa vitesse, ni de
+    // son avance. Deux joueurs à la même minute subissent la même brume.
+    //
+    //   v(t) = speed + speedGain · ((t − pressureDelay) / pressureRamp)^pressureCurve
+    //
+    // borné à speedMax. Avec les valeurs ci-dessous :
+    //
+    //   0–1 min   4,90 u/s   grâce : on apprend la carte
+    //   2 min     5,17 u/s   encore permissif
+    //   4 min     5,93 u/s   pression normale
+    //   5 min     6,32 u/s   la marche à vide ne suffit plus
+    //   7 min     7,17 u/s   il faut avoir lâché du poids
+    //   9 min+    8,30 u/s   plafond
+    //
+    // Vitesses du joueur, pour référence : 6,2 u/s à vide, 2,85 u/s à sac
+    // plein, 11,16 u/s en sprint. Le plafond passe volontairement AU-DESSUS
+    // de la marche à vide (croisement à 6 min 20) : sans cela, un joueur qui
+    // ne ramasse rien n'est jamais rattrapé, et c'était le défaut de la 0.4.
+    // Passé ce point, tenir la distance demande de sprinter, donc du souffle,
+    // donc un sac léger. La dernière décision reste au joueur.
+    pressureDelay: 60,      // secondes de grâce avant toute montée
+    pressureRamp: 480,      // secondes pour aller de 0 à 1 sur la rampe
+    pressureCurve: 1.25,    // > 1 : montée douce au début, plus franche ensuite
+    speedGain: 3.1,         // unités/seconde ajoutées au bout de la rampe
+    speedMax: 8.3,          // plafond dur, jamais dépassé
     damagePerSecond: 32,    // points de vie par seconde passée dedans
     // Corps de la brume : prune très sombre et saturé, pour trancher avec le
     // ciel pâle et le sol vert de la zone sûre.
@@ -67,7 +101,10 @@ export const CONFIG = {
 
   stamina: {
     max: 100,
-    drainBase: 17,          // par seconde, sac vide
+    // 0.5 : à 17, l'alternance sprint/marche donnait un régime soutenable
+    // de 7,5 u/s — assez pour distancer la brume indéfiniment avec un sac
+    // léger. À 21, le même cycle plafonne nettement plus bas.
+    drainBase: 21,          // par seconde, sac vide
     drainPerWeight: 15,     // supplément par seconde à sac plein
     regen: 21,              // par seconde hors sprint
     regenDelay: 0.6,        // secondes avant de récupérer
@@ -88,18 +125,26 @@ export const CONFIG = {
   // finissait dans un monde totalement vide — mesuré : 0 ressource dès le
   // 40e chunk sur une diagonale. La probabilité est désormais continue : chaque
   // type culmine à une distance et décroît doucement, sans jamais couper net.
+  //
+  // 0.5 — le cristal était 24,9 % des ressources générées (mesuré sur 8 734
+  // poses, 4 seeds, 3 axes). À ce taux ce n'est plus une trouvaille, c'est du
+  // consommable : on en avait toujours un en réserve, et la brume n'était
+  // jamais vraiment une menace. Son abondance passe de 0,36 à 0,070, ce qui
+  // donne 6,6 % des poses (mesuré, 4 seeds × 3 axes × 100 chunks). La densité globale monte de 0,30 à 0,345 pour que
+  // le monde ne se vide pas d'autant : le cristal doit devenir rare, pas les
+  // ressources.
   resources: {
     bois:    { label: "Bois",    weight: 7,  value: 1,  color: 0x9c6836,
                lateralPeak: 0,  lateralSpread: 30, abundance: 1.00, size: 0.24 },
     pierre:  { label: "Pierre",  weight: 13, value: 4,  color: 0x8d9299,
                lateralPeak: 32, lateralSpread: 28, abundance: 0.78, size: 0.3 },
-    cristal: { label: "Cristal", weight: 5,  value: 14, color: 0x63e8d6,
-               lateralPeak: 64, lateralSpread: 32, abundance: 0.36, size: 0.5 }
+    cristal: { label: "Cristal", weight: 5,  value: 18, color: 0x63e8d6,
+               lateralPeak: 64, lateralSpread: 32, abundance: 0.070, size: 0.5 }
   },
 
   // Tentatives de pose par chunk, et densité globale appliquée au poids total.
   spawnAttemptsPerChunk: 9,
-  spawnDensity: 0.30,
+  spawnDensity: 0.345,
 
   // L'axe de fuite suit le joueur, mais lentement : un détour de dix secondes
   // ne déplace l'axe que de neuf unités, donc reste un vrai détour. Une dérive
@@ -114,7 +159,11 @@ export const CONFIG = {
   // Le cristal est une ressource d'urgence : le consommer repousse la brume.
   // Dilemme visé : le garder (et porter son poids) ou l'utiliser maintenant.
   crystal: {
-    pushDistance: 42,       // unités de marge regagnées
+    // 0.4 rendait 42 unités pour un cristal qu'on trouvait tous les quatre
+    // ramassages : de quoi tenir 300 à 400 unités d'avance en permanence. À
+    // 26 unités, un cristal achète environ six secondes de survie à la
+    // pression de mi-partie — il sauve une situation, il ne l'installe pas.
+    pushDistance: 26,       // unités de marge regagnées
     flashDuration: 0.75
   },
 
@@ -133,7 +182,7 @@ export const CONFIG = {
     rearmDelay: 1.4         // délai avant de pouvoir le reprendre
   },
 
-  telemetryKey: "fog-nomad-runs-0.4",
+  telemetryKey: "fog-nomad-runs-0.5",
   maxStoredRuns: 20,
 
   // Au-delà de cet écart latéral, on comptabilise un détour.
@@ -165,6 +214,41 @@ export function lateralWeights(lateral) {
 }
 
 /** Vitesse relative en fonction de la charge. Une seule formule, ici. */
+/**
+ * Vitesse de la brume à un instant de la run.
+ *
+ * Ne dépend QUE du temps écoulé. Volontairement : le joueur ne doit jamais
+ * pouvoir se dire que la brume accélère parce qu'il joue bien. Aucun terme de
+ * cette formule ne lit la position du joueur, sa vitesse, sa charge ni son
+ * avance.
+ *
+ * Plate pendant `pressureDelay`, puis montée en puissance sur `pressureRamp`,
+ * plafonnée à `speedMax`.
+ */
+/**
+ * Bande de sensation d'une marge donnée. Ce sont des repères de mesure, pas
+ * des murs : rien dans le jeu ne force le joueur à rester dans l'une d'elles.
+ */
+export const FOG_BANDS = [
+  { nom: "critique",     max: 30 },
+  { nom: "tension",      max: 80 },
+  { nom: "confortable",  max: 180 },
+  { nom: "avance",       max: 250 },
+  { nom: "exceptionnel", max: Infinity }
+];
+
+export function bandFor(gap) {
+  for (const b of FOG_BANDS) if (gap < b.max) return b.nom;
+  return "exceptionnel";
+}
+
+export function fogSpeedAt(elapsed) {
+  const f = CONFIG.fog;
+  const t = Math.max(0, elapsed - f.pressureDelay);
+  const ramp = Math.min(1, t / f.pressureRamp);
+  return Math.min(f.speedMax, f.speed + f.speedGain * Math.pow(ramp, f.pressureCurve));
+}
+
 export function speedFromWeight(ratio) {
   const r = Math.min(1, Math.max(0, ratio));
   return 1 - (1 - CONFIG.weight.speedAtFull) * Math.pow(r, CONFIG.weight.curve);
@@ -547,6 +631,10 @@ export function createFogNomad(ctx) {
     gapSamples: 0,
     timeAbove200: 0,
     timeBelow50: 0,
+    // Bandes de sensation (0.5). On mesure le temps passé dans chacune pour
+    // savoir où une run se déroule réellement, au lieu de le supposer.
+    bands: { critique: 0, tension: 0, confortable: 0, avance: 0, exceptionnel: 0 },
+    fogSpeed: 0,
     detours: 0,
     inFog: false,
     fires: 0,
@@ -603,6 +691,8 @@ export function createFogNomad(ctx) {
     state.gapSamples = 0;
     state.timeAbove200 = 0;
     state.timeBelow50 = 0;
+    state.bands = { critique: 0, tension: 0, confortable: 0, avance: 0, exceptionnel: 0 };
+    state.fogSpeed = fogSpeedAt(0);
     state.detours = 0;
     state.inFog = false;
     state.fires = 0;
@@ -985,9 +1075,10 @@ export function createFogNomad(ctx) {
 
     // --- brume ---
     // Un feu allumé la ralentit fortement, mais ne l'arrête jamais.
-    const speed = (CONFIG.fog.speed + CONFIG.fog.acceleration * state.elapsed) *
+    const speed = fogSpeedAt(state.elapsed) *
       (sheltered ? CONFIG.fire.fogSlowFactor : 1);
 
+    state.fogSpeed = speed;
     state.fogZ -= speed * delta;
 
     fogGroup.position.set(player.position.x, 0, state.fogZ);
@@ -1000,6 +1091,7 @@ export function createFogNomad(ctx) {
     state.gapSamples++;
     if (gap > 200) state.timeAbove200 += delta;
     if (gap < 50) state.timeBelow50 += delta;
+    state.bands[bandFor(gap)] += delta;
     state.inFog = gap <= 0;
 
     if (state.inFog) {
@@ -1153,7 +1245,11 @@ export function createFogNomad(ctx) {
       margeMax: Math.round(state.maxFogGap),
       margeMoyenne: state.gapSamples ? Math.round(state.gapSum / state.gapSamples) : null,
       tempsAuDessus200: +state.timeAbove200.toFixed(1),
-      tempsSous50: +state.timeBelow50.toFixed(1)
+      tempsSous50: +state.timeBelow50.toFixed(1),
+      bandes: Object.fromEntries(
+        Object.entries(state.bands).map(([k, v]) => [k, +v.toFixed(1)])
+      ),
+      vitesseBrumeFinale: +fogSpeedAt(state.elapsed).toFixed(2)
     };
 
     try {
@@ -1215,6 +1311,8 @@ export function createFogNomad(ctx) {
     playerZ: () => player.position.z,
     playerX: () => player.position.x,
     get fogGap() { return state.fogZ - player.position.z; },
+    get fogSpeed() { return fogSpeedAt(state.elapsed); },
+    get bands() { return state.bands; },
     get resourceCount() { return activeResources.size; },
     get resourceObjects() { return [...activeResources]; },
     // Ce qui doit rester borné d'une run à l'autre : les deux registres par

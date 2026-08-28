@@ -1810,6 +1810,16 @@ window.HORIZON = {
   usePulse() { return game.usePulse(); },
   resetSpawnStats() { game.resetSpawnStats(); },
   get fogGap() { return game.fogGap; },
+  get fogSpeed() { return game.fogSpeed; },
+  // Constantes du moteur, pour que les simulations d'équilibrage travaillent
+  // sur les vraies valeurs au lieu de les recopier.
+  engine: {
+    playerSpeed: PLAYER_SPEED,
+    runMultiplier: RUN_MULTIPLIER,
+    chunkSize: CHUNK_SIZE,
+    chunkRadius: CHUNK_RADIUS
+  },
+  get bands() { return game.bands; },
   get resourceCount() { return game.resourceCount; },
   get bookkeeping() { return game.bookkeeping; },
   get bagTier() { return game.bagTier(); },
