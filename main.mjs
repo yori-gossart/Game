@@ -35,28 +35,53 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
 
-const SKY_COLOR = 0x8bc6df;
-const FOG_COLOR = 0xb4cdd4;
+// Le monde est beau mais il meurt. Devant, une lumière pâle et chaude vers
+// laquelle on fuit ; derrière, un ciel froid déjà gagné par la brume. Le joueur
+// doit pouvoir lire « où est l'espoir » d'un seul regard, sans texte.
+const SKY_COLOR = 0x9dc0cd;
+const FOG_COLOR = 0xb9cbd0;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(SKY_COLOR);
 
 // Ciel : une demi-sphère retournée dont le dégradé passe par les couleurs de
-// sommets. Un seul appel de rendu, aucune texture, aucun shader — et l'horizon
-// cesse d'être un aplat uniforme.
-const SKY_TOP = new THREE.Color(0x4d86b8);
-const SKY_HORIZON = new THREE.Color(0xbcd4d8);
+// sommets. Un seul appel de rendu, aucune texture, aucun shader.
+//
+// 0.5 — le dégradé n'est plus seulement vertical. Il est aussi DIRECTIONNEL :
+// le joueur fuit vers les Z décroissants, donc le −Z du ciel s'éclaircit et se
+// réchauffe (l'horizon vers lequel on va) tandis que le +Z se refroidit et
+// s'assombrit vers le prune de la brume. Comme le dôme suit la caméra sans
+// tourner avec elle, cette opposition reste vraie quel que soit le regard.
+const SKY_ZENITH      = new THREE.Color(0x3f6f9c);
+const SKY_AVANT       = new THREE.Color(0xf0d9b4);   // −Z : l'horizon d'espoir
+const SKY_ARRIERE     = new THREE.Color(0x6a5f7d);   // +Z : déjà contaminé
+const SKY_ZENITH_BACK = new THREE.Color(0x2e2a42);
 
 const skyDome = (() => {
-  const geometry = new THREE.SphereGeometry(1, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.55);
+  const geometry = new THREE.SphereGeometry(1, 32, 14, 0, Math.PI * 2, 0, Math.PI * 0.55);
   const position = geometry.attributes.position;
   const colors = new Float32Array(position.count * 3);
+  const bas = new THREE.Color();
+  const haut = new THREE.Color();
   const tint = new THREE.Color();
 
   for (let i = 0; i < position.count; i++) {
+    const y = Math.max(0, position.getY(i));
+    const z = position.getZ(i);
+    const rayon = Math.hypot(position.getX(i), z) || 1;
+
+    // 0 plein avant (−Z), 1 plein arrière (+Z). Adouci pour que la bascule se
+    // fasse sur les côtés et non par une couture nette.
+    const arriere = Math.min(1, Math.max(0, (z / rayon) * 0.5 + 0.5));
+    const doux = arriere * arriere * (3 - 2 * arriere);
+
+    bas.copy(SKY_AVANT).lerp(SKY_ARRIERE, doux);
+    haut.copy(SKY_ZENITH).lerp(SKY_ZENITH_BACK, doux);
+
     // 0 à l'horizon, 1 au zénith, avec une transition resserrée vers le bas.
-    const t = Math.pow(Math.max(0, position.getY(i)), 0.62);
-    tint.copy(SKY_HORIZON).lerp(SKY_TOP, t);
+    const t = Math.pow(y, 0.62);
+    tint.copy(bas).lerp(haut, t);
+
     colors[i * 3] = tint.r;
     colors[i * 3 + 1] = tint.g;
     colors[i * 3 + 2] = tint.b;
@@ -85,7 +110,7 @@ scene.add(skyDome);
 
 const CHUNK_SIZE = 32;
 const CHUNK_RADIUS = 2;
-const CHUNK_SEGMENTS = 12;
+const CHUNK_SEGMENTS = 16;
 const PLAYER_SPEED = 6.2;
 const CAMERA_DISTANCE = 13;
 const RUN_MULTIPLIER = 1.8;
@@ -234,26 +259,102 @@ const BIOMES = [
   }
 ];
 
+// Teintes de zone, mélangées au sol par-dessus la couleur de biome.
+const ROC_COLOR = new THREE.Color(0x8c8b84);
+const SEC_COLOR = new THREE.Color(0xa8925f);
+const CLAIRIERE_COLOR = new THREE.Color(0x9fb872);
+
 const biomeColors = BIOMES.map((biome) => new THREE.Color(biome.terrain));
 const biomeTreeColors = BIOMES.map((biome) => new THREE.Color(biome.tree));
 
+// ---------------------------------------------------------------------------
+// Contamination — le monde meurt derrière le joueur.
+//
+// La brume ne se contente plus d'avaler : elle déteint. À l'approche du mur,
+// la végétation se décolore, le sol vire au froid et le contraste tombe. Le
+// joueur doit sentir que ce qu'il laisse derrière lui est perdu, pas seulement
+// caché.
+//
+// Implémentation : une seule paire d'uniformes partagée par tous les matériaux
+// du monde, injectée par onBeforeCompile. Le facteur se calcule à partir du Z
+// monde du fragment et de la position courante de la brume — donc aucun coût
+// par objet, aucune couleur de sommet à recalculer, et rien à refaire quand un
+// chunk se recrée. Trois instructions dans le fragment shader.
+const contamination = {
+  fogZ: { value: 1e9 },
+  // Distance sur laquelle la décoloration s'installe avant le mur. Volontairement
+  // plus courte que la portée de vue (62 u) : le monde proche reste vivant et
+  // coloré, seule la bande qui va être avalée se décolore. Une portée plus
+  // large éteignait toute l'image et supprimait le contraste recherché.
+  range: { value: 46 },
+  // Vers quoi le monde tend : un gris-prune froid et désaturé.
+  color: { value: new THREE.Color(0x4a4658) }
+};
+
+/**
+ * Rend un matériau sensible à la contamination. À appeler sur tout matériau
+ * du monde ; les objets d'interface et le ciel en sont exclus volontairement.
+ */
+function contaminable(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uContamFogZ = contamination.fogZ;
+    shader.uniforms.uContamRange = contamination.range;
+    shader.uniforms.uContamColor = contamination.color;
+
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying float vContamZ;")
+      .replace(
+        "#include <fog_vertex>",
+        // La matrice d'instance n'est PAS dans modelMatrix : sans ce cas,
+        // toutes les instances d'un chunk partageaient le Z du chunk, soit
+        // jusqu'à 16 unités d'erreur sur des arbres voisins.
+        "#include <fog_vertex>\n" +
+        "#ifdef USE_INSTANCING\n" +
+        "  vContamZ = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).z;\n" +
+        "#else\n" +
+        "  vContamZ = (modelMatrix * vec4(transformed, 1.0)).z;\n" +
+        "#endif"
+      );
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nvarying float vContamZ;\n" +
+        "uniform float uContamFogZ;\nuniform float uContamRange;\nuniform vec3 uContamColor;"
+      )
+      // Juste avant le brouillard atmosphérique : la contamination agit sur la
+      // couleur éclairée, le brouillard s'applique ensuite comme d'habitude.
+      .replace(
+        "#include <fog_fragment>",
+        "float contam = smoothstep(uContamFogZ - uContamRange, uContamFogZ, vContamZ);\n" +
+        "gl_FragColor.rgb = mix(gl_FragColor.rgb, uContamColor, contam * 0.82);\n" +
+        "#include <fog_fragment>"
+      );
+  };
+
+  // Deux matériaux au même programme ne sont mutualisés que si leur clé de
+  // cache concorde : sans cela Three.js réutiliserait un programme non patché.
+  material.customProgramCacheKey = () => "contam";
+  return material;
+}
+
 // Un seul matériau de terrain : la couleur de biome passe par les couleurs de
 // sommets, ce qui fond les biomes entre eux au lieu de les découper au chunk.
-const terrainMaterial = new THREE.MeshLambertMaterial({
+const terrainMaterial = contaminable(new THREE.MeshLambertMaterial({
   vertexColors: true
-});
+}));
 
-const rockMaterial = new THREE.MeshLambertMaterial({ color: 0x7d7b73 });
+const rockMaterial = contaminable(new THREE.MeshLambertMaterial({ color: 0x7d7b73 }));
 
-const trunkMaterial = new THREE.MeshLambertMaterial({ color: 0x765336 });
+const trunkMaterial = contaminable(new THREE.MeshLambertMaterial({ color: 0x765336 }));
 
 // Matériaux mutualisés : la teinte de feuillage et de fleur passe par la
 // couleur d'instance, pas par un matériau supplémentaire par objet.
-const crownMaterial = new THREE.MeshLambertMaterial();
+const crownMaterial = contaminable(new THREE.MeshLambertMaterial());
 
 // Les fleurs sont fusionnées par chunk en une seule géométrie : la teinte
 // passe donc par les couleurs de sommets, comme pour le terrain.
-const flowerMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
+const flowerMaterial = contaminable(new THREE.MeshLambertMaterial({ vertexColors: true }));
 const flowerInstancedMaterial = new THREE.MeshLambertMaterial();
 
 /** Modulo toujours positif : les coordonnées de chunk peuvent être négatives. */
@@ -347,20 +448,115 @@ const trunkGeometry = (() => {
   return faceted(g);
 })();
 
-// Les deux cônes du feuillage sont fusionnés : un arbre = 1 tronc + 1 houppier.
-const crownGeometry = (() => {
-  const lower = new THREE.ConeGeometry(0.88, 1.8, 6);
-  lower.translate(0, 1.72, 0);
-  const upper = new THREE.ConeGeometry(0.65, 1.4, 6);
-  upper.translate(0, 2.58, 0);
+// ---------------------------------------------------------------------------
+// Familles de végétation.
+//
+// 0.4 n'avait qu'un houppier, décliné par mise à l'échelle non uniforme. À
+// l'usage cela restait « le même sapin recopié partout » : une silhouette ne
+// se déguise pas en une autre par un facteur d'échelle.
+//
+// 0.5 en a donc quatre, chacune une géométrie fusionnée distincte, chacune
+// instanciée par chunk. Le coût est de trois objets de scène supplémentaires
+// par chunk — et zéro quand la famille est absente, `buildInstanced` rendant
+// null sur une liste vide.
+// ---------------------------------------------------------------------------
 
-  const merged = mergeGeometries([lower, upper]);
-  lower.dispose();
-  upper.dispose();
+/** Conifère élancé : trois étages étroits, silhouette verticale. */
+const coniferTallGeometry = (() => {
+  const etages = [
+    new THREE.ConeGeometry(0.82, 1.55, 6),
+    new THREE.ConeGeometry(0.62, 1.35, 6),
+    new THREE.ConeGeometry(0.4, 1.15, 6)
+  ];
+  etages[0].translate(0, 1.62, 0);
+  etages[1].translate(0, 2.42, 0);
+  etages[2].translate(0, 3.12, 0);
+
+  const merged = mergeGeometries(etages);
+  for (const g of etages) g.dispose();
+  return faceted(merged);
+})();
+
+/** Conifère large : deux étages trapus, silhouette pyramidale. */
+const coniferBroadGeometry = (() => {
+  const etages = [
+    new THREE.ConeGeometry(1.25, 1.5, 7),
+    new THREE.ConeGeometry(0.85, 1.25, 7)
+  ];
+  etages[0].translate(0, 1.35, 0);
+  etages[1].translate(0, 2.15, 0);
+
+  const merged = mergeGeometries(etages);
+  for (const g of etages) g.dispose();
+  return faceted(merged);
+})();
+
+/**
+ * Arbre mort : tronc et branches nues en une seule géométrie, sans houppier.
+ * C'est la famille qui raconte que le monde se meurt — elle se densifie près
+ * de la brume (voir createChunk).
+ */
+const deadTreeGeometry = (() => {
+  const parts = [];
+
+  const tronc = new THREE.CylinderGeometry(0.09, 0.17, 2.6, 5);
+  tronc.translate(0, 1.3, 0);
+  parts.push(tronc);
+
+  // Quatre branches en oblique, longueurs et hauteurs dépareillées.
+  const branches = [
+    { l: 1.05, y: 2.05, a: 0.55, r: 0 },
+    { l: 0.82, y: 1.62, a: -0.62, r: Math.PI * 0.62 },
+    { l: 0.68, y: 2.35, a: 0.48, r: Math.PI * 1.15 },
+    { l: 0.5,  y: 1.28, a: -0.5, r: Math.PI * 1.62 }
+  ];
+
+  for (const b of branches) {
+    const g = new THREE.CylinderGeometry(0.035, 0.07, b.l, 4);
+    g.translate(0, b.l / 2, 0);
+    g.rotateZ(b.a);
+    g.rotateY(b.r);
+    g.translate(0, b.y, 0);
+    parts.push(g);
+  }
+
+  const merged = mergeGeometries(parts);
+  for (const g of parts) g.dispose();
+  return faceted(merged);
+})();
+
+/** Arbuste : masse basse et irrégulière, sans tronc visible. */
+const bushGeometry = (() => {
+  const g = new THREE.IcosahedronGeometry(0.62, 0);
+  g.scale(1, 0.66, 1);
+  g.translate(0, 0.4, 0);
+  return faceted(g);
+})();
+
+/** Touffe d'herbe : trois lames croisées, pour le couvert bas. */
+const grassGeometry = (() => {
+  const parts = [];
+  for (let i = 0; i < 3; i++) {
+    const g = new THREE.ConeGeometry(0.07, 0.44, 3);
+    g.translate(0, 0.22, 0);
+    g.rotateZ((i - 1) * 0.28);
+    g.rotateY(i * 2.1);
+    g.translate((i - 1) * 0.09, 0, (i - 1) * 0.06);
+    parts.push(g);
+  }
+  const merged = mergeGeometries(parts);
+  for (const g of parts) g.dispose();
   return faceted(merged);
 })();
 
 const rockGeometry = faceted(new THREE.DodecahedronGeometry(0.5, 0));
+
+/** Bloc anguleux : les zones rocheuses ont besoin d'autre chose qu'un galet. */
+const boulderGeometry = (() => {
+  const g = new THREE.DodecahedronGeometry(1.15, 0);
+  g.scale(1, 0.78, 0.92);
+  return faceted(g);
+})();
 const flowerGeometry = faceted(new THREE.SphereGeometry(0.11, 5, 4));
 
 
@@ -390,75 +586,132 @@ const keys = new Set();
 
 function createPlayer() {
   const group = new THREE.Group();
-  const blue = new THREE.MeshLambertMaterial({ color: 0x284d72 });
-  const blueDark = new THREE.MeshLambertMaterial({ color: 0x18354e });
-  const skin = new THREE.MeshLambertMaterial({ color: 0xd8aa83 });
-  const hair = new THREE.MeshLambertMaterial({ color: 0x3d2d27 });
-  const bagMat = new THREE.MeshLambertMaterial({ color: 0x8a5f36 });
 
-  // Buste effilé vers les épaules plutôt qu'une capsule uniforme : la
-  // silhouette se lit, et le sac a une surface franche où s'accrocher.
-  const bodyGeo = faceted(new THREE.CylinderGeometry(0.31, 0.24, 0.86, 8));
-  const body = new THREE.Mesh(bodyGeo, blue);
-  body.position.y = 1.28;
+  // Palette : un voyageur, pas un mannequin. Manteau sombre et froid, capuche,
+  // écharpe claire — la seule tache vive de la silhouette, pour qu'on le
+  // retrouve d'un coup d'œil sur un fond de prairie ou de brume.
+  const manteau = new THREE.MeshLambertMaterial({ color: 0x2f3a4d });
+  const manteauSombre = new THREE.MeshLambertMaterial({ color: 0x222a38 });
+  const pantalon = new THREE.MeshLambertMaterial({ color: 0x3d3a34 });
+  const peau = new THREE.MeshLambertMaterial({ color: 0xd8aa83 });
+  const echarpe = new THREE.MeshLambertMaterial({ color: 0xc4553f });
+  const cuir = new THREE.MeshLambertMaterial({ color: 0x7d5734 });
+  const cuirFonce = new THREE.MeshLambertMaterial({ color: 0x5d3f26 });
 
-  const shoulders = new THREE.Mesh(
-    faceted(new THREE.CylinderGeometry(0.3, 0.33, 0.2, 8)),
-    blue
-  );
-  shoulders.position.y = 1.66;
+  // --- torse -----------------------------------------------------------
+  // Un tronc de cône à huit pans, plus large aux épaules qu'à la taille :
+  // c'est cet évasement qui fait lire « personne » plutôt que « boîte ».
+  const buste = new THREE.Mesh(
+    faceted(new THREE.CylinderGeometry(0.33, 0.235, 0.8, 8)), manteau);
+  buste.position.y = 1.3;
 
-  const head = new THREE.Mesh(faceted(new THREE.SphereGeometry(0.27, 10, 8)), skin);
-  head.position.y = 1.94;
-  head.scale.set(1, 1.08, 0.94);
+  // Basque du manteau : une jupe courte qui casse la verticale des jambes.
+  const basque = new THREE.Mesh(
+    faceted(new THREE.CylinderGeometry(0.3, 0.36, 0.3, 8)), manteauSombre);
+  basque.position.y = 0.98;
 
-  const hairCap = new THREE.Mesh(
-    faceted(new THREE.SphereGeometry(0.285, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.58)),
-    hair
-  );
-  hairCap.position.y = 1.99;
+  const epaules = new THREE.Mesh(
+    faceted(new THREE.CylinderGeometry(0.315, 0.35, 0.17, 8)), manteau);
+  epaules.position.y = 1.7;
 
-  // Membres pivotant à la hanche et à l'épaule, pas en leur milieu : la
-  // géométrie est décalée vers le bas pour que la rotation parte du haut.
-  const legGeo = faceted(new THREE.CapsuleGeometry(0.115, 0.62, 3, 6));
-  legGeo.translate(0, -0.37, 0);
+  // --- tête -------------------------------------------------------------
+  const cou = new THREE.Mesh(
+    faceted(new THREE.CylinderGeometry(0.085, 0.1, 0.12, 6)), peau);
+  cou.position.y = 1.8;
 
-  const leftLeg = new THREE.Mesh(legGeo, blueDark);
-  leftLeg.position.set(-0.155, 0.9, 0);
+  const tete = new THREE.Mesh(faceted(new THREE.SphereGeometry(0.235, 10, 8)), peau);
+  tete.position.y = 1.99;
+  tete.scale.set(1, 1.1, 0.92);
 
-  const rightLeg = leftLeg.clone();
-  rightLeg.position.x = 0.155;
+  // Capuche rabattue : une demi-sphère un peu plus large que la tête, ouverte
+  // vers l'avant. Elle donne la silhouette reconnaissable de dos.
+  const capuche = new THREE.Mesh(
+    faceted(new THREE.SphereGeometry(0.29, 10, 7, 0, Math.PI * 2, 0, Math.PI * 0.62)),
+    manteauSombre);
+  capuche.position.set(0, 1.98, -0.035);
+  capuche.scale.set(1, 1.12, 1.06);
 
-  const armGeo = faceted(new THREE.CapsuleGeometry(0.082, 0.5, 3, 6));
-  armGeo.translate(0, -0.3, 0);
+  // Écharpe : l'accent de couleur, à hauteur de cou.
+  const foulard = new THREE.Mesh(
+    faceted(new THREE.CylinderGeometry(0.155, 0.175, 0.14, 8)), echarpe);
+  foulard.position.y = 1.79;
 
-  const leftArm = new THREE.Mesh(armGeo, skin);
-  leftArm.position.set(-0.355, 1.62, 0);
-  leftArm.rotation.z = -0.12;
+  const panFoulard = new THREE.Mesh(
+    faceted(new THREE.BoxGeometry(0.13, 0.34, 0.06)), echarpe);
+  panFoulard.position.set(0.1, 1.62, 0.16);
+  panFoulard.rotation.z = 0.16;
 
-  const rightArm = leftArm.clone();
-  rightArm.position.x = 0.355;
-  rightArm.rotation.z = 0.12;
+  // --- membres ----------------------------------------------------------
+  // Géométries décalées vers le bas : la rotation part de la hanche et de
+  // l'épaule, pas du milieu du membre.
+  const cuisseGeo = faceted(new THREE.CapsuleGeometry(0.115, 0.44, 3, 6));
+  cuisseGeo.translate(0, -0.28, 0);
 
-  // L'avant du personnage est son +Z local (voir player.rotation.y plus bas) :
-  // le sac se porte donc en -Z, côté caméra quand on s'éloigne.
-  // Le sac est plaqué contre le dos, sanglé aux épaules.
-  // Le buste fait 0.62 d'envergure : un sac plus étroit disparaîtrait derrière
-  // lui. Il est donc plus large que le torse et nettement décalé vers l'arrière.
-  const bag = new THREE.Mesh(faceted(new THREE.BoxGeometry(0.5, 0.54, 0.3)), bagMat);
-  bag.position.set(0, 1.34, -0.4);
+  const jambeGauche = new THREE.Mesh(cuisseGeo, pantalon);
+  jambeGauche.position.set(-0.15, 0.92, 0);
+  const jambeDroite = jambeGauche.clone();
+  jambeDroite.position.x = 0.15;
 
-  const strapGeo = faceted(new THREE.BoxGeometry(0.07, 0.34, 0.06));
-  const leftStrap = new THREE.Mesh(strapGeo, bagMat);
-  leftStrap.position.set(-0.17, 1.56, -0.16);
-  leftStrap.rotation.x = -0.22;
-  const rightStrap = leftStrap.clone();
-  rightStrap.position.x = 0.17;
+  // Bottes : un pied lisible vaut mieux qu'une capsule qui s'arrête.
+  const botteGeo = faceted(new THREE.BoxGeometry(0.17, 0.16, 0.26));
+  const botteGauche = new THREE.Mesh(botteGeo, cuirFonce);
+  botteGauche.position.set(-0.15, 0.09, 0.03);
+  const botteDroite = botteGauche.clone();
+  botteDroite.position.x = 0.15;
 
-  group.add(body, shoulders, head, hairCap, leftLeg, rightLeg,
-            leftArm, rightArm, bag, leftStrap, rightStrap);
-  group.userData = { body, shoulders, head, hairCap, leftLeg, rightLeg,
-                     leftArm, rightArm, bag };
+  const brasGeo = faceted(new THREE.CapsuleGeometry(0.078, 0.42, 3, 6));
+  brasGeo.translate(0, -0.26, 0);
+
+  const brasGauche = new THREE.Mesh(brasGeo, manteau);
+  brasGauche.position.set(-0.36, 1.66, 0);
+  brasGauche.rotation.z = -0.13;
+
+  const brasDroit = brasGauche.clone();
+  brasDroit.position.x = 0.36;
+  brasDroit.rotation.z = 0.13;
+
+  // Mains : deux petites masses au bout des bras, pour que le balancier se lise.
+  const mainGeo = faceted(new THREE.SphereGeometry(0.075, 6, 5));
+  const mainGauche = new THREE.Mesh(mainGeo, peau);
+  mainGauche.position.y = -0.5;
+  brasGauche.add(mainGauche);
+  const mainDroite = new THREE.Mesh(mainGeo, peau);
+  mainDroite.position.y = -0.5;
+  brasDroit.add(mainDroite);
+
+  // --- sac --------------------------------------------------------------
+  // L'avant du personnage est son +Z local : le sac se porte donc en −Z.
+  // Il doit rester plus large que le buste (0,66 d'envergure), sans quoi il
+  // disparaît derrière lui dès qu'on s'éloigne.
+  const sac = new THREE.Mesh(faceted(new THREE.BoxGeometry(0.5, 0.56, 0.3)), cuir);
+  sac.position.set(0, 1.36, -0.4);
+
+  // Rabat et sangles : trois volumes qui font lire « sac » et pas « caisse ».
+  const rabat = new THREE.Mesh(faceted(new THREE.BoxGeometry(0.52, 0.16, 0.32)), cuirFonce);
+  rabat.position.set(0, 0.26, 0.01);
+  rabat.rotation.x = -0.12;
+  sac.add(rabat);
+
+  const sangleGeo = faceted(new THREE.BoxGeometry(0.075, 0.4, 0.06));
+  const sangleGauche = new THREE.Mesh(sangleGeo, cuirFonce);
+  sangleGauche.position.set(-0.18, 1.55, -0.13);
+  sangleGauche.rotation.x = -0.2;
+  const sangleDroite = sangleGauche.clone();
+  sangleDroite.position.x = 0.18;
+
+  group.add(buste, basque, epaules, cou, tete, capuche, foulard, panFoulard,
+            jambeGauche, jambeDroite, botteGauche, botteDroite,
+            brasGauche, brasDroit, sac, sangleGauche, sangleDroite);
+
+  group.userData = {
+    body: buste, basque, shoulders: epaules, head: tete, hairCap: capuche,
+    foulard, panFoulard, cou,
+    leftLeg: jambeGauche, rightLeg: jambeDroite,
+    leftBoot: botteGauche, rightBoot: botteDroite,
+    leftArm: brasGauche, rightArm: brasDroit,
+    bag: sac
+  };
+
   return group;
 }
 
@@ -490,7 +743,24 @@ function terrainHeight(x, z) {
   const detail =
     Math.cos((x - z) * 0.055 - sz * 2.1) * 0.42;
 
-  return broad + ridge + hills + detail;
+  // 0.5 — le relief manquait de franchise : tout ondulait au même rythme.
+  //
+  // `creux` ajoute de vraies dépressions, larges et rares (la puissance 3
+  // écrase la partie haute de la sinusoïde et ne garde que les creux).
+  // `plis` ajoute un plissement court qui donne du grain aux pentes sans
+  // rendre le sol bruyant, parce qu'il est modulé par la pente elle-même.
+  const bosse = Math.sin(x * 0.0195 + sx * 7.3) * Math.cos(z * 0.0172 - sz * 6.1);
+  const creux = -Math.pow(Math.max(0, bosse), 3) * 3.6;
+
+  const plis =
+    Math.sin(x * 0.112 - sz * 3.3) *
+    Math.cos(z * 0.098 + sx * 2.9) * 0.34;
+
+  // Le relèvement compense les creux : sans lui ils noyaient 25 % du terrain
+  // (contre 19,5 % en 0.4), et un quart du monde devenait un lac. Mesuré avec
+  // ces valeurs : 15,1 % sous l'eau, pour des dépressions plus profondes
+  // qu'avant — plus de relief ET moins d'eau.
+  return broad + ridge + hills + detail + creux + plis + 0.9;
 }
 
 /**
@@ -499,6 +769,36 @@ function terrainHeight(x, z) {
  * uniquement de la position monde, les biomes se fondent sans coupure aux
  * frontières de chunk.
  */
+/**
+ * Champ de zones — le terrain n'est plus un tapis uniforme.
+ *
+ * Trois champs lents et décorrélés, lus à la même position monde par le
+ * terrain (couleur) et par la végétation (familles). C'est ce partage qui fait
+ * qu'une zone rocheuse a l'air rocheuse : le sol grisonne ET les arbres
+ * cèdent la place à des blocs, au même endroit et sans concertation explicite.
+ *
+ * Aucun coût de mémoire : rien n'est stocké, tout se recalcule à la demande à
+ * partir de la position et de la seed.
+ */
+function zoneAt(x, z) {
+  const sx = worldSeed * 0.00011;
+  const sz = worldSeed * 0.00007;
+
+  const rocaille =
+    Math.sin(x * 0.0125 + sx * 5.1) * 0.5 +
+    Math.cos(z * 0.0163 - sz * 3.7) * 0.5;
+
+  const clairiere =
+    Math.sin((x - z) * 0.0208 + sx * 2.3) * 0.5 +
+    Math.cos((x + z) * 0.0141 - sz * 4.9) * 0.5;
+
+  const sec =
+    Math.sin(z * 0.0094 - sx * 6.2) * 0.5 +
+    Math.cos(x * 0.0117 + sz * 5.4) * 0.5;
+
+  return { rocaille, clairiere, sec };
+}
+
 const biomeWeights = new Float32Array(BIOMES.length);
 
 function computeBiomeWeights(x, z) {
@@ -625,9 +925,31 @@ function createChunk(cx, cz) {
     const height = positions.getY(i);
     const shade = 1 + grain * 0.10 + Math.max(-1, Math.min(1, height / 7)) * 0.08;
 
-    colors[i * 3] = Math.min(1, vertexColor.r * shade);
-    colors[i * 3 + 1] = Math.min(1, vertexColor.g * shade);
-    colors[i * 3 + 2] = Math.min(1, vertexColor.b * shade);
+    vertexColor.multiplyScalar(shade);
+
+    // Le sol dit la même chose que la végétation : la zone rocheuse grisonne,
+    // le sol sec vire à l'ocre pâle, la clairière s'éclaircit un peu. Les
+    // teintes sont lues au même endroit que les familles d'arbres.
+    const zone = zoneAt(worldX, worldZ);
+
+    if (zone.rocaille > 0.35) {
+      const t = Math.min(1, (zone.rocaille - 0.35) / 0.5) * 0.62;
+      vertexColor.lerp(ROC_COLOR, t);
+    }
+
+    if (zone.sec > 0.35) {
+      const t = Math.min(1, (zone.sec - 0.35) / 0.5) * 0.55;
+      vertexColor.lerp(SEC_COLOR, t);
+    }
+
+    if (zone.clairiere > 0.5) {
+      const t = Math.min(1, (zone.clairiere - 0.5) / 0.4) * 0.3;
+      vertexColor.lerp(CLAIRIERE_COLOR, t);
+    }
+
+    colors[i * 3] = Math.min(1, vertexColor.r);
+    colors[i * 3 + 1] = Math.min(1, vertexColor.g);
+    colors[i * 3 + 2] = Math.min(1, vertexColor.b);
   }
 
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -643,12 +965,22 @@ function createChunk(cx, cz) {
   const chunkBiome = BIOMES[dominantBiomeIndex(centerX, centerZ)];
 
   // Densité rapportée à la surface du chunk pour rester visuellement stable.
+  //
+  // 0.5 — nettement relevée. Deux raisons : les props se répartissent
+  // maintenant sur huit familles au lieu de trois, donc chacune recevait trop
+  // peu d'exemplaires pour se lire ; et l'appareil réel a montré de la marge
+  // (60 FPS à 9 000 triangles). Un monde vide n'est pas un monde sobre.
   const propCount =
-    7 + Math.floor(random01(cx, cz, 12) * 16 * chunkBiome.density);
+    16 + Math.floor(random01(cx, cz, 12) * 30 * chunkBiome.density);
 
-  const trees = [];
-  const bushes = [];
+  const troncs = [];        // troncs des deux conifères
+  const coniferesHauts = [];
+  const coniferesLarges = [];
+  const arbresMorts = [];
+  const arbustes = [];
   const rocks = [];
+  const blocs = [];
+  const herbes = [];
   const flowers = [];
 
   for (let i = 0; i < propCount; i++) {
@@ -669,41 +1001,78 @@ function createChunk(cx, cz) {
     const biomeIndex = dominantBiomeIndex(worldX, worldZ);
     const biome = BIOMES[biomeIndex];
     const type = random01(cx * 41 + i, cz * 31 - i, 51);
+    const rotation = random01(cx - i * 3, cz + i * 9, 64) * Math.PI * 2;
+    const echelle = 0.66 + random01(cx + i * 7, cz - i * 11, 62) * 0.78;
+    const relief = zoneAt(worldX, worldZ);
 
-    if (type < biome.density && !biome.dry) {
-      // Élancement variable : le même houppier donne des silhouettes
-      // différentes sans géométrie ni appel de rendu supplémentaires.
-      const slender = 0.72 + random01(cx * 5 + i, cz * 3 - i, 66) * 0.62;
+    // Une zone rocheuse ne porte presque pas d'arbres, une clairière pas du
+    // tout, un sol contaminé ne porte que du bois mort. C'est le terrain qui
+    // décide, pas un tirage indépendant : les deux doivent raconter la même
+    // chose au même endroit.
+    if (relief.clairiere > 0.55) {
+      // Clairière : herbe rase et rien d'autre. C'est le vide qui la dessine.
+      if (type < 0.55) {
+        herbes.push({ x: localX, y, z: localZ, rotation,
+                      scale: 0.7 + random01(cx + i, cz - i, 91) * 0.6, biomeIndex });
+      }
+      continue;
+    }
 
-      trees.push({
-        x: localX,
-        y,
-        z: localZ,
-        scale: 0.66 + random01(cx + i * 7, cz - i * 11, 62) * 0.78,
-        slender,
-        rotation: random01(cx - i * 3, cz + i * 9, 64) * Math.PI * 2,
-        biomeIndex
-      });
-    } else if (biome.dry && type < biome.density) {
-      // Les terres sèches n'ont pas d'arbres mais gardent un couvert bas :
-      // même géométrie de houppier, sans tronc et à petite échelle.
-      bushes.push({
-        x: localX,
-        y,
-        z: localZ,
-        scale: 0.34 + random01(cx + i * 7, cz - i * 11, 62) * 0.22,
-        rotation: random01(cx - i * 3, cz + i * 9, 64) * Math.PI * 2,
-        biomeIndex,
-        bushy: true
-      });
+    if (relief.rocaille > 0.5) {
+      // Zone rocheuse : blocs anguleux, quelques arbustes accrochés.
+      if (type < 0.62) {
+        blocs.push({ x: localX, y, z: localZ,
+                     scale: 0.5 + random01(cx - i * 5, cz + i * 3, 72) * 0.75,
+                     seed: random01(i, cx + cz, 75) });
+      } else if (type < 0.82) {
+        arbustes.push({ x: localX, y, z: localZ, rotation,
+                        scale: 0.7 + random01(cx + i, cz - i, 93) * 0.5, biomeIndex });
+      } else {
+        rocks.push({ x: localX, y, z: localZ,
+                     scale: 0.38 + random01(cx - i * 5, cz + i * 3, 72) * 0.6,
+                     seed: random01(i, cx + cz, 75) });
+      }
+      continue;
+    }
+
+    if (relief.sec > 0.5 || biome.dry) {
+      // Sol sec ou contaminé : bois mort et broussaille, pas de couvert vert.
+      if (type < 0.42) {
+        arbresMorts.push({ x: localX, y, z: localZ, rotation,
+                           scale: 0.72 + random01(cx + i * 3, cz - i * 5, 95) * 0.66 });
+      } else if (type < 0.74) {
+        arbustes.push({ x: localX, y, z: localZ, rotation,
+                        scale: 0.6 + random01(cx + i, cz - i, 93) * 0.55, biomeIndex });
+      } else {
+        rocks.push({ x: localX, y, z: localZ,
+                     scale: 0.38 + random01(cx - i * 5, cz + i * 3, 72) * 0.82,
+                     seed: random01(i, cx + cz, 75) });
+      }
+      continue;
+    }
+
+    // Terrain ordinaire : les deux conifères se partagent le couvert, avec
+    // un peu de bois mort et de broussaille pour casser la régularité.
+    if (type < biome.density * 0.52) {
+      coniferesHauts.push({ x: localX, y, z: localZ, rotation, scale: echelle, biomeIndex });
+      troncs.push({ x: localX, y, z: localZ, rotation, scale: echelle });
+    } else if (type < biome.density * 0.86) {
+      coniferesLarges.push({ x: localX, y, z: localZ, rotation,
+                             scale: echelle * 0.92, biomeIndex });
+      troncs.push({ x: localX, y, z: localZ, rotation, scale: echelle * 0.8 });
+    } else if (type < biome.density * 0.94) {
+      arbresMorts.push({ x: localX, y, z: localZ, rotation,
+                         scale: 0.8 + random01(cx + i * 3, cz - i * 5, 95) * 0.6 });
+    } else if (type < biome.density + 0.14) {
+      arbustes.push({ x: localX, y, z: localZ, rotation,
+                      scale: 0.65 + random01(cx + i, cz - i, 93) * 0.55, biomeIndex });
+    } else if (type < biome.density + 0.3) {
+      herbes.push({ x: localX, y, z: localZ, rotation,
+                    scale: 0.75 + random01(cx + i, cz - i, 91) * 0.6, biomeIndex });
     } else {
-      rocks.push({
-        x: localX,
-        y,
-        z: localZ,
-        scale: 0.38 + random01(cx - i * 5, cz + i * 3, 72) * 0.82,
-        seed: random01(i, cx + cz, 75)
-      });
+      rocks.push({ x: localX, y, z: localZ,
+                   scale: 0.38 + random01(cx - i * 5, cz + i * 3, 72) * 0.82,
+                   seed: random01(i, cx + cz, 75) });
     }
   }
 
@@ -741,46 +1110,76 @@ function createChunk(cx, cz) {
     }
   }
 
-  const trunkMesh = buildInstanced(
-    trunkGeometry,
-    trunkMaterial,
-    trees,
-    (obj, tree) => {
-      obj.position.set(tree.x, tree.y, tree.z);
-      obj.rotation.set(0, tree.rotation, 0);
-      obj.scale.set(tree.scale, tree.scale, tree.scale);
+  // Une famille absente ne coûte rien : buildInstanced rend null sur une liste
+  // vide, donc un chunk de clairière ne porte que son terrain et son herbe.
+  const placerDroit = (obj, item, penche = 0) => {
+    obj.position.set(item.x, item.y, item.z);
+    obj.rotation.set(penche, item.rotation, 0);
+    obj.scale.setScalar(item.scale);
+  };
+
+  const trunkMesh = buildInstanced(trunkGeometry, trunkMaterial, troncs, placerDroit);
+
+  const coniferTallMesh = buildInstanced(
+    coniferTallGeometry, crownMaterial, coniferesHauts,
+    (obj, item) => {
+      // Étirement vertical propre à chaque arbre : deux conifères hauts
+      // voisins ne se superposent pas.
+      const elan = 0.86 + ((item.x * 7 + item.z * 13) % 1 + 1) % 1 * 0.42;
+      obj.position.set(item.x, item.y, item.z);
+      obj.rotation.set(0, item.rotation, 0);
+      obj.scale.set(item.scale * 0.94, item.scale * elan, item.scale * 0.94);
+    },
+    (item) => biomeTreeColors[item.biomeIndex]
+  );
+
+  const coniferBroadMesh = buildInstanced(
+    coniferBroadGeometry, crownMaterial, coniferesLarges,
+    (obj, item) => {
+      const large = 0.92 + ((item.z * 11 + item.x * 5) % 1 + 1) % 1 * 0.36;
+      obj.position.set(item.x, item.y, item.z);
+      obj.rotation.set(0, item.rotation, 0);
+      obj.scale.set(item.scale * large, item.scale * 0.9, item.scale * large);
+    },
+    (item) => biomeTreeColors[item.biomeIndex]
+  );
+
+  // Le bois mort garde la couleur du tronc : c'est ce qui le distingue de loin.
+  const deadMesh = buildInstanced(
+    deadTreeGeometry, trunkMaterial, arbresMorts,
+    (obj, item) => {
+      obj.position.set(item.x, item.y, item.z);
+      // Légère inclinaison : un arbre mort ne se tient pas droit.
+      obj.rotation.set(((item.x * 3) % 1) * 0.12 - 0.06, item.rotation, 0);
+      obj.scale.setScalar(item.scale);
     }
   );
 
-  // Arbres et buissons partagent la géométrie de houppier : un seul appel de rendu.
-  const crownMesh = buildInstanced(
-    crownGeometry,
-    crownMaterial,
-    [...trees, ...bushes],
+  const bushMesh = buildInstanced(
+    bushGeometry, crownMaterial, arbustes,
     (obj, item) => {
-      const sink = item.bushy ? 0.82 * item.scale : 0;
-      const slender = item.slender || 1;
-
-      obj.position.set(item.x, item.y - sink, item.z);
+      obj.position.set(item.x, item.y, item.z);
       obj.rotation.set(0, item.rotation, 0);
-      // Large et trapu, ou étroit et élancé : la variété vient de là.
-      obj.scale.set(
-        item.scale * (2 - slender) * 0.72 + item.scale * 0.28,
-        item.scale * slender,
-        item.scale * (2 - slender) * 0.72 + item.scale * 0.28
-      );
+      obj.scale.set(item.scale, item.scale * 0.82, item.scale);
+    },
+    (item) => biomeTreeColors[item.biomeIndex]
+  );
+
+  const grassMesh = buildInstanced(
+    grassGeometry, crownMaterial, herbes,
+    (obj, item) => {
+      obj.position.set(item.x, item.y, item.z);
+      obj.rotation.set(0, item.rotation, 0);
+      obj.scale.setScalar(item.scale);
     },
     (item) => biomeTreeColors[item.biomeIndex]
   );
 
   const rockMesh = buildInstanced(
-    rockGeometry,
-    rockMaterial,
-    rocks,
+    rockGeometry, rockMaterial, rocks,
     (obj, rock) => {
       obj.position.set(rock.x, rock.y + 0.25 * rock.scale, rock.z);
       obj.rotation.set(rock.seed * 1.7, rock.seed * Math.PI * 1.8, rock.seed * 0.9);
-      // Galets aplatis ou blocs anguleux selon le tirage.
       obj.scale.set(
         rock.scale * (0.8 + rock.seed * 0.5),
         rock.scale * (0.45 + rock.seed * 0.55),
@@ -789,12 +1188,34 @@ function createChunk(cx, cz) {
     }
   );
 
-  if (trunkMesh) trunkMesh.userData.kind = "troncs";
-  if (crownMesh) crownMesh.userData.kind = "houppiers";
-  if (rockMesh) rockMesh.userData.kind = "rochers";
+  const boulderMesh = buildInstanced(
+    boulderGeometry, rockMaterial, blocs,
+    (obj, bloc) => {
+      obj.position.set(bloc.x, bloc.y + 0.15 * bloc.scale, bloc.z);
+      obj.rotation.set(bloc.seed * 0.6, bloc.seed * Math.PI * 2, bloc.seed * 0.4);
+      obj.scale.set(
+        bloc.scale * (0.85 + bloc.seed * 0.45),
+        bloc.scale * (0.7 + bloc.seed * 0.6),
+        bloc.scale * (0.8 + (1 - bloc.seed) * 0.45)
+      );
+    }
+  );
 
-  for (const mesh of [trunkMesh, crownMesh, rockMesh]) {
-    if (mesh) group.add(mesh);
+  const familles = [
+    [trunkMesh, "troncs"],
+    [coniferTallMesh, "houppiers"],
+    [coniferBroadMesh, "houppiers"],
+    [deadMesh, "boismort"],
+    [bushMesh, "arbustes"],
+    [grassMesh, "herbes"],
+    [rockMesh, "rochers"],
+    [boulderMesh, "rochers"]
+  ];
+
+  for (const [mesh, kind] of familles) {
+    if (!mesh) continue;
+    mesh.userData.kind = kind;
+    group.add(mesh);
   }
 
   addFlowers(group, flowers);
@@ -1282,40 +1703,96 @@ function keyboardMovement() {
 }
 
 function animatePlayer(moving, sprinting, delta) {
-  const { body, head, leftLeg, rightLeg, leftArm, rightArm } = player.userData;
+  const u = player.userData;
+  const { body, basque, head, hairCap, foulard, panFoulard, cou,
+          leftLeg, rightLeg, leftBoot, rightBoot, leftArm, rightArm, shoulders } = u;
+
+  // Le sac alourdit la démarche : à pleine charge le pas se raccourcit et le
+  // buste se penche. La charge se lit donc dans le mouvement, pas seulement
+  // dans le volume du sac.
+  const charge = Math.min(1, game.state.weight / game.config.weight.max);
 
   if (moving) {
     idleTime = 0;
-    walkTime += delta * (sprinting ? 12 : 8);
+    walkTime += delta * (sprinting ? 12.5 : 8) * (1 - charge * 0.22);
 
-    const swing = Math.sin(walkTime) * (sprinting ? 0.78 : 0.5);
+    const ampleur = (sprinting ? 0.82 : 0.54) * (1 - charge * 0.3);
+    const swing = Math.sin(walkTime) * ampleur;
 
     leftLeg.rotation.x = swing;
     rightLeg.rotation.x = -swing;
-    leftArm.rotation.x = -swing * 0.78;
-    rightArm.rotation.x = swing * 0.78;
 
-    // Buste légèrement penché en avant à la course.
-    body.rotation.x = sprinting ? 0.16 : 0.06;
-    body.position.y = 1.28;
-    head.position.y = 1.94;
+    // Les bottes contre-tournent : le pied reste à plat plus longtemps.
+    leftBoot.rotation.x = -swing * 0.45;
+    rightBoot.rotation.x = swing * 0.45;
+    leftBoot.position.z = 0.03 + Math.sin(walkTime) * 0.11;
+    rightBoot.position.z = 0.03 - Math.sin(walkTime) * 0.11;
+    leftBoot.position.y = 0.09 + Math.max(0, Math.sin(walkTime)) * 0.07;
+    rightBoot.position.y = 0.09 + Math.max(0, -Math.sin(walkTime)) * 0.07;
 
-    player.position.y += Math.abs(Math.sin(walkTime * 2)) * 0.025;
+    leftArm.rotation.x = -swing * 0.8;
+    rightArm.rotation.x = swing * 0.8;
+    // Les bras s'écartent un peu du corps à la course.
+    leftArm.rotation.z = -0.13 - (sprinting ? 0.1 : 0);
+    rightArm.rotation.z = 0.13 + (sprinting ? 0.1 : 0);
+
+    // Roulis du buste et contre-roulis des épaules : c'est ce décalage qui
+    // fait qu'une marche ressemble à une marche et non à un pantin qui glisse.
+    const penche = (sprinting ? 0.2 : 0.07) + charge * 0.16;
+    body.rotation.x = penche;
+    body.rotation.z = Math.sin(walkTime) * 0.035;
+    shoulders.rotation.y = Math.sin(walkTime) * 0.13;
+    shoulders.rotation.x = penche;
+    basque.rotation.x = penche * 0.5;
+    basque.rotation.z = Math.sin(walkTime) * 0.05;
+
+    // La tête reste plus stable que le corps : le regard tient l'horizon.
+    head.rotation.z = -Math.sin(walkTime) * 0.02;
+    head.position.y = 1.99 - penche * 0.1;
+    hairCap.position.y = 1.98 - penche * 0.1;
+    cou.position.y = 1.8 - penche * 0.08;
+    foulard.position.y = 1.79 - penche * 0.08;
+
+    // Le pan de l'écharpe flotte derrière : le seul élément qui traîne.
+    panFoulard.rotation.x = -0.3 - (sprinting ? 0.45 : 0.15) +
+                            Math.sin(walkTime * 1.6) * 0.12;
+    panFoulard.rotation.z = 0.16 + Math.sin(walkTime * 1.3) * 0.09;
+
+    player.position.y += Math.abs(Math.sin(walkTime * 2)) * 0.025 * (1 - charge * 0.4);
   } else {
     const settle = Math.min(1, delta * 10);
+    const detend = (o, prop) => { o.rotation[prop] *= 1 - settle; };
 
-    leftLeg.rotation.x *= 1 - settle;
-    rightLeg.rotation.x *= 1 - settle;
-    leftArm.rotation.x *= 1 - settle;
-    rightArm.rotation.x *= 1 - settle;
+    for (const o of [leftLeg, rightLeg, leftArm, rightArm, leftBoot, rightBoot]) {
+      detend(o, "x");
+    }
     body.rotation.x *= 1 - settle;
+    body.rotation.z *= 1 - settle;
+    basque.rotation.x *= 1 - settle;
+    basque.rotation.z *= 1 - settle;
+    shoulders.rotation.y *= 1 - settle;
+    shoulders.rotation.x *= 1 - settle;
+    head.rotation.z *= 1 - settle;
 
-    // Respiration : le personnage ne se fige pas complètement à l'arrêt.
+    leftArm.rotation.z += (-0.13 - leftArm.rotation.z) * settle;
+    rightArm.rotation.z += (0.13 - rightArm.rotation.z) * settle;
+    leftBoot.position.z += (0.03 - leftBoot.position.z) * settle;
+    rightBoot.position.z += (0.03 - rightBoot.position.z) * settle;
+    leftBoot.position.y += (0.09 - leftBoot.position.y) * settle;
+    rightBoot.position.y += (0.09 - rightBoot.position.y) * settle;
+
+    // Respiration : le personnage ne se fige pas complètement à l'arrêt, et
+    // souffle plus fort quand il est chargé.
     idleTime += delta;
-    const breath = Math.sin(idleTime * 1.7) * 0.012;
+    const breath = Math.sin(idleTime * (1.7 + charge * 1.1)) * (0.012 + charge * 0.008);
 
-    body.position.y = 1.28 + breath;
-    head.position.y = 1.94 + breath * 1.6;
+    body.position.y = 1.3 + breath;
+    head.position.y = 1.99 + breath * 1.6;
+    hairCap.position.y = 1.98 + breath * 1.6;
+    cou.position.y = 1.8 + breath * 1.3;
+    foulard.position.y = 1.79 + breath * 1.3;
+    panFoulard.rotation.x = -0.12 + Math.sin(idleTime * 0.9) * 0.07;
+    panFoulard.rotation.z = 0.16 + Math.sin(idleTime * 0.7) * 0.05;
   }
 }
 
@@ -1489,8 +1966,13 @@ function animate() {
   );
 
   // Le dôme est centré sur la caméra et dimensionné juste sous le plan far.
+  // Il ne tourne PAS avec elle : l'opposition avant/arrière du ciel doit rester
+  // liée au monde, pas au regard.
   skyDome.position.copy(camera.position);
   skyDome.scale.setScalar(CAMERA_FAR * 0.92);
+
+  // Une seule écriture par image, partagée par tous les matériaux du monde.
+  contamination.fogZ.value = game.state.fogZ;
 
   sun.position.set(
     player.position.x + SUN_OFFSET.x,

@@ -570,36 +570,72 @@ export function createFogNomad(ctx) {
   const bagBaseScale = bag.scale.clone();
   const BAG_BASE_Y = bag.position.y;
   const BAG_BASE_Z = bag.position.z;
-  const BAG_HEIGHT = bag.geometry.boundingBox
-    ? bag.geometry.boundingBox.max.y - bag.geometry.boundingBox.min.y
-    : (bag.geometry.computeBoundingBox(),
-       bag.geometry.boundingBox.max.y - bag.geometry.boundingBox.min.y);
-  const bagCrateMaterial = new THREE.MeshLambertMaterial({ color: 0x6f7d55 });
+  const BAG_HEIGHT = (() => {
+    bag.geometry.computeBoundingBox();
+    const bb = bag.geometry.boundingBox;
+    return bb.max.y - bb.min.y;
+  })();
+
+  // Chargement visible : ce qui dépasse du sac aux paliers hauts.
+  //
+  // Cinq silhouettes, pas cinq tailles. Le sac grossit, mais surtout il se
+  // couvre d'objets qui dépassent — bois en travers, pierres sanglées,
+  // cristaux qui accrochent la lumière. On doit lire l'avidité du joueur sur
+  // son dos, de dos, à treize unités de distance, sans regarder la jauge.
+  //
+  // Les charges sont filles du PERSONNAGE et non du sac : le sac se met à
+  // l'échelle par palier, et des enfants auraient grossi avec lui jusqu'à
+  // couvrir la tête. Leur position se recalcule à partir du dessus réel du sac.
+  const CHARGE_BOIS = new THREE.MeshLambertMaterial({ color: 0x8a6238 });
+  const CHARGE_PIERRE = new THREE.MeshLambertMaterial({ color: 0x8d9299 });
+  const CHARGE_CRISTAL = new THREE.MeshLambertMaterial({
+    color: 0x63e8d6,
+    emissive: 0x1d6f66,
+    emissiveIntensity: 0.85
+  });
+  const CHARGE_TOILE = new THREE.MeshLambertMaterial({ color: 0x6f6a52 });
+
   const bagCrates = [];
 
   {
-    // Trois charges qui débordent du sac aux paliers hauts : le joueur doit
-    // voir qu'il est lourd sans lire la jauge.
-    //
-    // Elles sont filles du PERSONNAGE, pas du sac : le sac se met à l'échelle
-    // par palier, et des caisses filles auraient grossi avec lui jusqu'à
-    // couvrir la tête. Leur position est recalculée à partir du dessus du sac.
-    const crateGeometry = faceted(new THREE.BoxGeometry(0.22, 0.2, 0.18));
-    const rollGeometry = faceted(new THREE.CylinderGeometry(0.09, 0.09, 0.46, 6));
+    // Chaque entrée : palier minimal d'apparition, géométrie, matériau,
+    // décalage par rapport au dessus du sac, et rotation.
+    const rondin = faceted(new THREE.CylinderGeometry(0.055, 0.055, 0.62, 5));
+    rondin.rotateZ(Math.PI / 2);
 
-    const crates = [
-      { geo: crateGeometry, offset: [-0.13, 0.10, -0.02], rot: [0, 0.4, 0.12] },
-      { geo: crateGeometry, offset: [0.14, 0.16, -0.10], rot: [0, -0.5, -0.18] },
-      { geo: rollGeometry, offset: [0, 0.05, -0.24], rot: [0, 0, Math.PI / 2] }
+    const charges = [
+      // Palier 1 : un rouleau de toile sanglé sur le dessus. Discret.
+      { palier: 1, geo: faceted(new THREE.CylinderGeometry(0.09, 0.09, 0.44, 6)),
+        mat: CHARGE_TOILE, offset: [0, 0.05, -0.02], rot: [0, 0, Math.PI / 2] },
+
+      // Palier 2 : deux rondins en travers. La silhouette s'élargit.
+      { palier: 2, geo: rondin, mat: CHARGE_BOIS,
+        offset: [-0.02, 0.16, -0.05], rot: [0.1, 0.16, 0] },
+      { palier: 2, geo: rondin.clone(), mat: CHARGE_BOIS,
+        offset: [0.03, 0.24, -0.09], rot: [-0.08, -0.22, 0] },
+
+      // Palier 3 : une pierre calée au-dessus, qui déborde vers l'arrière.
+      { palier: 3, geo: faceted(new THREE.DodecahedronGeometry(0.16, 0)),
+        mat: CHARGE_PIERRE, offset: [-0.16, 0.3, -0.14], rot: [0.4, 0.7, 0.2] },
+      { palier: 3, geo: faceted(new THREE.BoxGeometry(0.2, 0.18, 0.16)),
+        mat: CHARGE_TOILE, offset: [0.17, 0.28, -0.1], rot: [0, -0.35, 0.12] },
+
+      // Palier 4 : un cristal planté au sommet. Il luit — on voit de loin
+      // que ce joueur porte quelque chose qui vaut le détour, et le risque.
+      { palier: 4, geo: faceted(new THREE.ConeGeometry(0.075, 0.34, 5)),
+        mat: CHARGE_CRISTAL, offset: [0.02, 0.42, -0.06], rot: [0.16, 0.3, 0.14] },
+      { palier: 4, geo: faceted(new THREE.ConeGeometry(0.05, 0.22, 5)),
+        mat: CHARGE_CRISTAL, offset: [-0.13, 0.38, -0.12], rot: [-0.2, 0.9, -0.26] }
     ];
 
-    for (const { geo, offset, rot } of crates) {
-      const crate = new THREE.Mesh(geo, bagCrateMaterial);
-      crate.rotation.set(rot[0], rot[1], rot[2]);
-      crate.visible = false;
-      crate.userData.offset = offset;
-      player.add(crate);
-      bagCrates.push(crate);
+    for (const c of charges) {
+      const mesh = new THREE.Mesh(c.geo, c.mat);
+      mesh.rotation.set(c.rot[0], c.rot[1], c.rot[2]);
+      mesh.visible = false;
+      mesh.userData.offset = c.offset;
+      mesh.userData.palier = c.palier;
+      player.add(mesh);
+      bagCrates.push(mesh);
     }
   }
 
@@ -1026,23 +1062,25 @@ export function createFogNomad(ctx) {
     // La charge s'empile surtout vers l'arrière et le haut. La croissance est
     // bornée : au dernier palier le sac doit rester un sac sur un dos, pas un
     // bloc qui avale les bras et les jambes de la silhouette.
+    // Le gonflement est plus discret qu'en 0.4 : ce sont désormais les charges
+    // qui dépassent qui portent la lecture, et un sac qui doublait de largeur
+    // effaçait complètement la silhouette du personnage.
     bag.scale.set(
-      bagBaseScale.x * (1 + tier * 0.13),
-      bagBaseScale.y * (1 + tier * 0.17),
-      bagBaseScale.z * (1 + tier * 0.36)
+      bagBaseScale.x * (1 + tier * 0.08),
+      bagBaseScale.y * (1 + tier * 0.11),
+      bagBaseScale.z * (1 + tier * 0.28)
     );
     bag.position.y = BAG_BASE_Y + tier * 0.03;
     bag.position.z = BAG_BASE_Z - tier * 0.05;
 
-    // Les caisses se posent sur le dessus réel du sac gonflé, à taille
+    // Les charges se posent sur le dessus réel du sac gonflé, à taille
     // constante : elles restent lisibles et ne masquent jamais la tête.
     const top = bag.position.y + (BAG_HEIGHT * bag.scale.y) / 2;
 
-    for (let i = 0; i < bagCrates.length; i++) {
-      const crate = bagCrates[i];
-      const [ox, oy, oz] = crate.userData.offset;
-      crate.position.set(ox, top + oy, bag.position.z + oz);
-      crate.visible = tier >= i + 2;
+    for (const charge of bagCrates) {
+      const [ox, oy, oz] = charge.userData.offset;
+      charge.position.set(ox, top + oy, bag.position.z + oz);
+      charge.visible = tier >= charge.userData.palier;
     }
   }
 
