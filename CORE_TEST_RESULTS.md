@@ -3,8 +3,9 @@
 Ce fichier recueille les **résultats réels de jeu**, pas les résultats techniques.
 Ceux-ci sont dans `FOG_NOMAD_CORE_TEST_0.3.md`.
 
-État : **une session interne enregistrée, sur la 0.3.** Le prototype est
-techniquement prêt ; son intérêt en tant que jeu n'est pas établi.
+État : **deux sessions internes enregistrées, sur la 0.3 et la 0.4.** Le
+prototype est techniquement prêt ; son intérêt en tant que jeu n'est pas
+établi. Aucune des cinq questions n'a de réponse.
 
 ---
 
@@ -54,6 +55,56 @@ génération.
 C'est la raison pour laquelle la 0.4 est une tranche verticale **interne** :
 elle corrige les trois défauts ci-dessus et donne au jeu une première identité
 visuelle, avant tout élargissement du test.
+
+---
+
+## Session interne — 0.4 — téléphone Android
+
+> **Ce n'est toujours pas une validation utilisateur externe.** Session de
+> l'auteur du projet sur son propre appareil, sur une version qu'il a lui-même
+> commandée. Les observations techniques sont fiables ; les jugements de
+> gameplay engagent une seule personne qui connaît le jeu.
+
+**Observations techniques**
+
+| | Relevé |
+| --- | --- |
+| Fluidité | globalement fluide |
+| FPS | ~60 |
+| Triangles | ~9 000 |
+| Appels de rendu | 50 à 60 |
+| Chunks actifs | 25 |
+
+Ce relevé est la première mesure de performance sur GPU réel depuis le début
+du projet. Il établit qu'il **restait de la marge** — c'est lui qui a autorisé
+la densité de végétation et le relief de la 0.5.
+
+**Ce qui fonctionne**
+
+Ressources générées pendant une longue exploration, objets jetés récupérables,
+cristal et feu de répit opérationnels, boucle brume / collecte / poids en
+place. Les trois correctifs de la 0.4 tiennent sur l'appareil.
+
+**Ce qui ne va pas**
+
+| Défaut observé | Traité en 0.5 |
+| --- | --- |
+| Trop de cristaux | oui — mesuré à 24,9 % des poses, ramené à 6,5 % (§1) |
+| La brume se repousse extrêmement loin | oui — poussée du cristal 42 → 26 u (§1) |
+| 350 à 440 unités d'avance observées | oui — pression temporelle (§2) ; simulé à 120–192 u pour trois profils sur quatre |
+| La menace perd sa tension | oui — conséquence des trois points ci-dessus |
+| Graphismes trop primitifs | oui — passe complète (§4) |
+| Monde sans mystère ni identité | oui — ciel directionnel, contamination, narration (§4 et §5) |
+| Quasiment aucune narration | oui — quatre types de structures et deux repères lointains (§5) |
+| Ressemble encore à un prototype technique | partiellement — à rejuger sur l'appareil |
+
+Les références en § renvoient à `FOG_NOMAD_IDENTITY_TENSION_0.5.md`.
+
+**Ce qui n'a pas été observé**
+
+La durée des runs n'a pas été relevée, ni le nombre de ressources ramassées,
+ni la cause de mort. Les cinq questions restent donc entières : cette session
+a servi à constater des défauts, pas à évaluer la boucle de jeu.
 
 ---
 

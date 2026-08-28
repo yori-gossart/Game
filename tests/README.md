@@ -1,7 +1,8 @@
 # Tests
 
-Cinq suites, exécutées sur Chromium en émulation Pixel 7 avec entrées tactiles.
-**166 vérifications au total.**
+Six suites, exécutées sur Chromium en émulation Pixel 7 avec entrées tactiles,
+plus un simulateur d'équilibrage qui tourne sans navigateur.
+**200 vérifications au total.**
 
 | Suite | Vérifications | Couvre |
 | --- | --- | --- |
@@ -10,6 +11,8 @@ Cinq suites, exécutées sur Chromium en émulation Pixel 7 avec entrées tactil
 | `fog03.mjs` | 42 | Fog Nomad 0.3 : brume, dégâts, mort, restart, ressources, poids, sac, endurance, jeter |
 | `fog04.mjs` | 47 | Fog Nomad 0.4 : ressources sur 100 chunks, objets jetés, cristal, feu, 10 cycles mort/restart |
 | `regressions.mjs` | 19 | défauts historiques déjà corrigés, visés par leur **mécanisme** |
+| `balance05.mjs` | 34 | Fog Nomad 0.5 : distribution des ressources, courbe de pression, bandes de marge, run longue, qualité |
+| `simulate05.mjs` | — | quatre profils de jeu simulés sur la vraie `CONFIG`, sans navigateur |
 
 ## Lancer
 
@@ -20,6 +23,8 @@ node tests/audit.mjs
 node tests/fog03.mjs
 node tests/fog04.mjs
 node tests/regressions.mjs
+node tests/balance05.mjs
+node tests/simulate05.mjs      # pas de navigateur, exécution directe
 ```
 
 Variables d'environnement : `URL` et `FOG_URL` (défaut
@@ -36,3 +41,13 @@ instanciée », qui est le mécanisme réellement identifié.
 **Le rendu de test est logiciel (SwiftShader).** Les FPS relevés ne transposent
 pas sur un GPU réel : ils servent à comparer avant/après, pas à valider la
 cible mobile. Cette validation-là se fait sur appareil, avec `?fogtest`.
+
+**Une règle apprise trois fois.** `delta` est plafonné à 40 ms par image : sous
+rendu logiciel, le temps de JEU avance moins vite que l'horloge murale. Toute
+assertion écrite en secondes réelles ou en « au moins N unités » finit par
+mesurer la cadence de la machine de test plutôt que la règle du jeu. On mesure
+donc en temps de jeu (`state.elapsed`), ou on attend la condition.
+
+**`simulate05.mjs` ne prouve pas que le jeu est intéressant.** Un modèle
+n'hésite pas, ne se lasse pas, ne change pas d'avis. Il sert à détecter un
+équilibre absurde — une run de 40 secondes, une run infinie — et rien d'autre.
