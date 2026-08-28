@@ -6,7 +6,8 @@
 | --- | --- |
 | Branche de départ | `fog-nomad-vertical-slice-0.4`, créée depuis `96de001` |
 | HEAD au démarrage | `96de001` « Sort les captures de test du dépôt » |
-| Dernière 0.3 déployée | production `horizon-proto-ten.vercel.app` (contenu de `e398fea`) |
+| Production Vercel | `horizon-proto-ten.vercel.app` — sert **Horizon 0.2** (`e9e3641`), pas la 0.3 |
+| Dernière 0.3 déployée | préversion `horizon-proto-git-fog-nomad-core-test-…` (`96de001`) |
 | Référence de sûreté | `e9e3641` (Horizon 0.2 stabilisée) — **conservée, non restaurée** |
 | Tests à l'état initial | `suite.mjs` 32/32 · `audit.mjs` 26/26 · `fog03.mjs` 41/41 |
 
@@ -403,8 +404,20 @@ Tout reste dans `CONFIG`, en tête de `fognomad.mjs`.
 
 ## 10. Déploiement
 
-La 0.4 part en **préversion Vercel uniquement**. La production reste sur la
-0.3 tant que la 0.4 n'a pas été validée sur le téléphone réel.
+La 0.4 part en **préversion Vercel uniquement** :
+
+```
+https://horizon-proto-git-fog-nomad-vertical-slice-04-nutricyclev01a.vercel.app/
+```
+
+État `READY`, commit `0da7dae`, vérifié en récupérant la page servie.
+
+**La production n'est pas touchée.** Un point à corriger dans la lecture
+initiale : `horizon-proto-ten.vercel.app` ne sert pas la 0.3 mais toujours
+**Horizon 0.2** — la 0.3 n'a jamais été promue en production, elle n'a existé
+qu'en préversion. La production restera sur la 0.2 tant que la 0.4 n'aura pas
+été validée sur le téléphone réel ; c'est alors la 0.4, et non la 0.3, qui la
+remplacera.
 
 Le mode `?fogtest` doit être utilisé lors de ce test : c'est le seul endroit où
 les FPS mesurés auront un sens.
