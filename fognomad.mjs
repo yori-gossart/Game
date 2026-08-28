@@ -270,7 +270,12 @@ export function bagTierFor(ratio) {
 }
 
 export function createFogNomad(ctx) {
-  const { THREE, scene, player, renderer, terrainHeight, onRestart, chunkAt } = ctx;
+  // `son` est optionnel : chaque appel est protégé, et la logique de jeu ne
+  // lit jamais son état. Le jeu doit tourner à l'identique sans lui.
+  const { THREE, scene, player, renderer, terrainHeight, onRestart, chunkAt,
+          son = {} } = ctx;
+
+  const jouer = (nom) => { try { son[nom]?.(); } catch { /* jamais bloquant */ } };
 
   // -------------------------------------------------------------------------
   // Ressources : géométries et matériaux partagés, objets individuels.
@@ -545,6 +550,17 @@ export function createFogNomad(ctx) {
   });
 
   scene.add(fogGroup);
+
+  /**
+   * Détail de la brume. En qualité réduite, les deux nappes arrière sont
+   * retirées : elles ne portent que de la profondeur, jamais une information
+   * de jeu. Le mur reste opaque et sa crête reste lisible, donc le joueur
+   * garde exactement la même lecture de la menace.
+   */
+  function setFogDetail(complet) {
+    fogLayers[0].mesh.visible = complet;
+    fogLayers[1].mesh.visible = complet;
+  }
 
   /**
    * Variation lente : chaque nappe glisse latéralement à sa propre vitesse et
@@ -884,6 +900,7 @@ export function createFogNomad(ctx) {
     spawnStats.ramassees++;
     state.maxWeight = Math.max(state.maxWeight, state.weight);
     updateBagVisual();
+    jouer("collecte");
   }
 
   /**
@@ -899,6 +916,7 @@ export function createFogNomad(ctx) {
     state.weight = Math.max(0, state.weight - CONFIG.resources[type].weight);
     state.dropped++;
     updateBagVisual();
+    jouer("jeter");
 
     const entry = chunkAt ? chunkAt(player.position.x, player.position.z) : null;
     if (entry) {
@@ -985,6 +1003,7 @@ export function createFogNomad(ctx) {
 
     state.firesLit++;
     state.fireUntil = Math.max(state.fireUntil, fire.userData.fire.until);
+    jouer("feu");
     emit();
     return true;
   }
@@ -1002,6 +1021,8 @@ export function createFogNomad(ctx) {
     state.fogZ += CONFIG.crystal.pushDistance;
     state.pulses++;
     state.flashUntil = state.elapsed + CONFIG.crystal.flashDuration;
+
+    jouer("cristal");
 
     // L'onde repart de zéro même si deux cristaux s'enchaînent.
     ondeT = 0;
@@ -1306,6 +1327,7 @@ export function createFogNomad(ctx) {
   function die(cause) {
     if (state.dead) return;
 
+    jouer("mort");
     state.dead = true;
     state.running = false;
     state.deathCause = cause;
@@ -1436,6 +1458,7 @@ export function createFogNomad(ctx) {
       };
     },
     setFogZ: (z) => { state.fogZ = z; },
+    setFogDetail,
     get spawnStats() { return spawnStats; },
     get axisX() { return currentAxisX(); },
     resetSpawnStats() {

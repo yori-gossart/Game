@@ -1,6 +1,7 @@
 import * as THREE from "./vendor/three/three.module.min.js";
 import { createFogNomad } from "./fognomad.mjs";
 import { bindRunUI, bindPerfOverlay } from "./fognomad-ui.mjs";
+import { demarrerAudio, mettreAJourAudio, sons, audioDisponible } from "./audio.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -28,6 +29,17 @@ const renderer = new THREE.WebGLRenderer({
 // 28 % de la résolution physique, et l'image remonte visiblement en escalier.
 // Le plancher est désormais 1.0.
 const PIXEL_RATIO_STEPS = [1.35, 1.15, 1.0];
+
+// Paliers de qualité. Déclarés ici, avec les constantes de rendu, parce que la
+// génération du premier chunk lit `facteurDecor()` : les déclarer plus bas
+// mettait `qualite` dans sa zone morte temporelle et empêchait le démarrage.
+const QUALITE_NIVEAUX = ["haute", "moyenne", "basse"];
+let qualite = 0;
+
+/** Densité de décor, appliquée à la génération des chunks. */
+function facteurDecor() {
+  return [1, 0.55, 0][qualite];
+}
 let pixelStep = 0;
 
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, PIXEL_RATIO_STEPS[0]));
@@ -819,6 +831,7 @@ const game = createFogNomad({
   renderer,
   terrainHeight,
   onRestart: () => startNewRun(),
+  son: sons,
   // Le chunk qui contient une position : sert à rattacher un objet jeté ou un
   // feu, pour qu'ils disparaissent avec lui.
   chunkAt: (x, z) => {
@@ -829,6 +842,19 @@ const game = createFogNomad({
 });
 
 const keys = new Set();
+
+// L'audio ne peut démarrer que depuis un geste du joueur. On s'accroche donc
+// au premier contact ou à la première touche, une seule fois, et le jeu ne
+// dépend en rien du résultat.
+{
+  const amorcer = () => {
+    demarrerAudio();
+    window.removeEventListener("pointerdown", amorcer);
+    window.removeEventListener("keydown", amorcer);
+  };
+  window.addEventListener("pointerdown", amorcer, { once: false });
+  window.addEventListener("keydown", amorcer, { once: false });
+}
 
 function createPlayer() {
   const group = new THREE.Group();
@@ -1355,8 +1381,10 @@ function createChunk(cx, cz) {
       arbustes.push({ x: localX, y, z: localZ, rotation,
                       scale: 0.65 + random01(cx + i, cz - i, 93) * 0.55, biomeIndex });
     } else if (type < biome.density + 0.3) {
-      herbes.push({ x: localX, y, z: localZ, rotation,
-                    scale: 0.75 + random01(cx + i, cz - i, 91) * 0.6, biomeIndex });
+      if (i % 4 < facteurDecor() * 4) {
+        herbes.push({ x: localX, y, z: localZ, rotation,
+                      scale: 0.75 + random01(cx + i, cz - i, 91) * 0.6, biomeIndex });
+      }
     } else {
       rocks.push({ x: localX, y, z: localZ,
                    scale: 0.38 + random01(cx - i * 5, cz + i * 3, 72) * 0.82,
@@ -1365,7 +1393,7 @@ function createChunk(cx, cz) {
   }
 
   if (!chunkBiome.dry) {
-    const clusterCount = Math.floor(random01(cx, cz, 101) * 5);
+    const clusterCount = Math.floor(random01(cx, cz, 101) * 5 * facteurDecor());
 
     for (let i = 0; i < clusterCount; i++) {
       const localX =
@@ -2226,6 +2254,30 @@ let fpsWindowTime = 0;
 let fpsWindowFrames = 0;
 let goodWindows = 0;
 
+/**
+ * Qualité automatique.
+ *
+ * Ordre de sacrifice, du moins coûteux au plus visible :
+ *   1. la densité de pixels, par paliers (déjà en place depuis la 0.2) ;
+ *   2. les décorations — herbes et fleurs, qui ne portent aucune information ;
+ *   3. les nappes de brume arrière, qui ne portent que de la profondeur.
+ *
+ * RÈGLE : la qualité ne touche JAMAIS aux mécaniques. Aucune ressource, aucune
+ * structure, aucun repère lointain, aucune distance, aucune vitesse ne dépend
+ * de ce réglage. Deux joueurs sur deux téléphones différents jouent au même
+ * jeu ; ils ne le voient simplement pas aussi bien.
+ */
+function appliquerQualite() {
+  // Les nappes de brume arrière tombent en qualité basse : c'est le poste de
+  // remplissage le plus lourd, et le seul dont la perte ne cache aucune
+  // information de jeu.
+  game.setFogDetail(qualite < 2);
+
+  // Les décorations déjà construites ne sont pas reconstruites : le changement
+  // prend effet sur les chunks suivants. Reconstruire tout le monde visible
+  // provoquerait une saccade bien pire que ce qu'on cherche à corriger.
+}
+
 function updateAdaptiveResolution(delta) {
   fpsWindowTime += delta;
   fpsWindowFrames++;
@@ -2237,22 +2289,35 @@ function updateAdaptiveResolution(delta) {
   fpsWindowTime = 0;
   fpsWindowFrames = 0;
 
-  if (fps < 38 && pixelStep < PIXEL_RATIO_STEPS.length - 1) {
-    pixelStep++;
-    goodWindows = 0;
-    applyPixelRatio();
+  if (fps < 38) {
+    // On épuise d'abord les paliers de résolution, moins visibles.
+    if (pixelStep < PIXEL_RATIO_STEPS.length - 1) {
+      pixelStep++;
+      goodWindows = 0;
+      applyPixelRatio();
+      return;
+    }
+
+    // Résolution au plancher et toujours trop lent : on retire du décor.
+    if (qualite < QUALITE_NIVEAUX.length - 1) {
+      qualite++;
+      goodWindows = 0;
+      appliquerQualite();
+    }
     return;
   }
 
   // Le seuil de remontée était à 57 alors que l'affichage plafonne à 60 : un
   // téléphone stabilisé à 50-56 ne remontait jamais. 52 laisse la marge.
-  if (fps > 52 && pixelStep > 0) {
+  if (fps > 52 && (pixelStep > 0 || qualite > 0)) {
     goodWindows++;
 
     if (goodWindows >= 2) {
-      pixelStep--;
       goodWindows = 0;
-      applyPixelRatio();
+      // On rend d'abord le décor, puis la résolution : l'inverse ferait
+      // osciller la netteté, bien plus perceptible qu'une touffe d'herbe.
+      if (qualite > 0) { qualite--; appliquerQualite(); }
+      else { pixelStep--; applyPixelRatio(); }
     }
   } else {
     goodWindows = 0;
@@ -2308,6 +2373,14 @@ function animate() {
 
   animatePlayer(moving, sprinting, delta);
   game.update(delta, moving, sprinting);
+
+  // Le son ne lit que des états déjà calculés : il ne décide de rien, et
+  // le jeu tourne identiquement s'il est indisponible.
+  mettreAJourAudio(delta, {
+    marge: game.fogGap,
+    marche: moving,
+    course: sprinting
+  });
 
   // Étalement de la génération sur plusieurs images.
   processBuildQueue(2);
@@ -2694,6 +2767,8 @@ window.HORIZON = {
     chunkRadius: CHUNK_RADIUS
   },
   get bands() { return game.bands; },
+  get qualite() { return QUALITE_NIVEAUX[qualite]; },
+  setQualite(n) { qualite = Math.max(0, Math.min(QUALITE_NIVEAUX.length - 1, n)); appliquerQualite(); },
   get resourceCount() { return game.resourceCount; },
   get bookkeeping() { return game.bookkeeping; },
   get bagTier() { return game.bagTier(); },
