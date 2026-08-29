@@ -209,6 +209,63 @@ ok("sac: plus large que le torse, donc visible de dos",
    sac ? `sac ${sac.largeur.toFixed(2)} / torse ${sac.torse.toFixed(2)}` : "");
 
 // ---------------------------------------------------------------------------
+console.log("\n=== AVEUGLEMENT PAR LA BRUME (0.5) ===");
+// Cause réelle : la caméra est 13 unités DERRIÈRE le joueur, donc la brume
+// l'atteignait une douzaine d'unités avant lui. Un plan opaque s'intercalait
+// entre l'objectif et le personnage, et l'écran devenait noir alors que le
+// joueur était vivant et devait choisir où courir. Constaté sur l'appareil :
+// écran entièrement noir à 2 unités de marge.
+//
+// Deux mécanismes le corrigent, et les deux doivent tenir : la caméra se
+// rapproche du joueur quand le front approche, et une nappe qui passe malgré
+// tout devant l'objectif s'efface.
+await H(() => { window.HORIZON.restartRun(); window.HORIZON.teleport(0, 0); });
+await wait(900);
+await H(() => { window.HORIZON.setYaw(0); window.HORIZON.setPitch(0.30); });
+await wait(400);
+
+const vue = [];
+for (const marge of [40, 20, 12, 6, 2]) {
+  // Deux précautions : la brume avance pendant l'attente, donc on recale la
+  // marge juste avant de mesurer ; et la caméra met quelques images à
+  // rejoindre sa nouvelle distance, donc on la laisse converger. Sans la
+  // seconde, la mesure à 2 unités oscillait entre 1 % et 58 %.
+  await H((g) => window.HORIZON.setFogGap(g), marge);
+  await wait(500);
+  await H((g) => window.HORIZON.setFogGap(g), marge);
+  await wait(350);
+
+  const mesure = await H((g) => {
+    window.HORIZON.setFogGap(g);
+    return {
+      noir: window.HORIZON.darkFraction(),
+      camZ: window.HORIZON.camPos.z,
+      fogZ: window.HORIZON.game.fogZ
+    };
+  }, marge);
+  vue.push({ marge, noir: mesure.noir,
+             dansBrume: +(mesure.camZ - mesure.fogZ).toFixed(1) });
+}
+console.log("   " + vue.map((v) => `${v.marge}:${v.noir}%`).join("  "));
+
+// Tant que le joueur n'est pas entré dans la brume, il doit VOIR. C'est la
+// régression constatée sur l'appareil : écran noir dès une douzaine d'unités
+// de marge, donc pendant toute la phase où il fallait justement choisir où
+// courir.
+ok("brume: l'écran reste lisible tant que le joueur n'est pas dedans",
+   vue.filter((v) => v.marge >= 6).every((v) => v.noir < 35),
+   vue.filter((v) => v.marge >= 6).map((v) => `${v.marge} u -> ${v.noir} %`).join(", "));
+
+// À 2 unités, l'avant-garde a déjà dépassé le joueur : une gêne est normale et
+// voulue. Ce qui ne l'est pas, c'est le noir complet.
+const critique = vue.find((v) => v.marge === 2);
+ok("brume: même collé au mur, l'écran n'est pas totalement noir",
+   critique.noir < 80, `${critique.noir} % à 2 unités`);
+
+ok("brume: la caméra n'est pas avalée avant le joueur",
+   vue.filter((v) => v.marge >= 6).every((v) => v.dansBrume < 4),
+   vue.map((v) => `${v.marge} u -> ${v.dansBrume}`).join(", "));
+
 console.log("\n=== ÉCRAN DE MORT ===");
 // Cause réelle : #death { display: grid } l'emportait sur l'attribut hidden,
 // donc l'écran de fin s'affichait au démarrage.

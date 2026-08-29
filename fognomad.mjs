@@ -276,8 +276,8 @@ export function bagTierFor(ratio) {
 export function createFogNomad(ctx) {
   // `son` est optionnel : chaque appel est protégé, et la logique de jeu ne
   // lit jamais son état. Le jeu doit tourner à l'identique sans lui.
-  const { THREE, scene, player, renderer, terrainHeight, onRestart, chunkAt,
-          son = {} } = ctx;
+  const { THREE, scene, camera, player, renderer, terrainHeight, onRestart,
+          chunkAt, son = {} } = ctx;
 
   const jouer = (nom) => { try { son[nom]?.(); } catch { /* jamais bloquant */ } };
 
@@ -542,7 +542,9 @@ export function createFogNomad(ctx) {
         streak: spec.streak,
         floor: spec.floor
       }),
-      fogMaterial
+      // Un matériau par nappe : leur opacité doit pouvoir varier
+      // indépendamment quand l'une d'elles passe devant l'objectif.
+      fogMaterial.clone()
     );
 
     mesh.position.set(0, spec.floor + height / 2, spec.z);
@@ -574,6 +576,38 @@ export function createFogNomad(ctx) {
    * portée de vue d'environ 80 : la dérive ne découvre jamais ses bords.
    */
   function updateFogVisual(delta) {
+    // --- une nappe ne doit jamais s'intercaler entre l'objectif et le joueur
+    //
+    // La caméra est derrière le personnage : le mur l'atteint donc AVANT lui.
+    // Quand cela arrivait, un plan opaque remplissait tout l'écran alors que
+    // le joueur était encore vivant et devait choisir où courir — il devenait
+    // aveugle au pire moment. Mesuré sur l'appareil : écran entièrement noir
+    // à 2 unités de marge, run terminée à 2,2 u/s de moyenne au lieu de 6,2.
+    //
+    // La caméra se rapproche déjà du joueur quand le front approche (voir
+    // distanceCameraUtile() dans main.mjs), mais elle ne peut pas se coller au
+    // personnage. Passé ce point, c'est la nappe qui cède : elle s'efface
+    // d'autant plus qu'elle est proche de l'objectif.
+    const pz = player.position.z;
+    const cz = camera ? camera.position.z : pz;
+    const versJoueur = pz - cz;
+
+    for (const layer of fogLayers) {
+      const worldZ = fogGroup.position.z + layer.mesh.position.z;
+      let masque = 1;
+
+      if (Math.abs(versJoueur) > 0.001) {
+        // 0 = la nappe est sur l'objectif, 1 = elle est sur le personnage.
+        const t = (worldZ - cz) / versJoueur;
+        if (t > 0 && t < 1) {
+          const p = Math.min(1, t / 0.85);
+          masque = p * p;
+        }
+      }
+
+      layer.mesh.material.opacity = CONFIG.fog.opacity * masque;
+    }
+
     for (const layer of fogLayers) {
       layer.phase += delta;
 

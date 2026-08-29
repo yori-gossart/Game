@@ -125,6 +125,12 @@ const CHUNK_RADIUS = 2;
 const CHUNK_SEGMENTS = 16;
 const PLAYER_SPEED = 6.2;
 const CAMERA_DISTANCE = 13;
+// Plancher de distance caméra : en dessous, le personnage occupe tout l'écran.
+const CAMERA_DISTANCE_MIN = 4.5;
+// Débordement de l'avant-garde de brume vers le joueur (voir CONFIG.fog dans
+// fognomad.mjs, nappe d'ordre 6) et marge de sécurité de la caméra.
+const FOG_VANGUARD = 8;
+const FOG_CAMERA_MARGE = 2.5;
 const RUN_MULTIPLIER = 1.8;
 const SAVE_KEY = "horizon-proto-0.2-save";
 
@@ -136,7 +142,29 @@ const FOGTEST = PARAMS.has("fogtest") || DIAG;
 
 const diagVisible = {
   terrain: true, troncs: true, houppiers: true, rochers: true,
-  fleurs: true, eau: true, soleil: true
+  fleurs: true, eau: true, soleil: true,
+  // Familles et objets ajoutés en 0.5.
+  boismort: true, arbustes: true, herbes: true, structures: true
+};
+
+/**
+ * Bascules 0.5, à isoler une par une SUR L'APPAREIL.
+ *
+ * L'artefact des fleurs de la 0.2 a coûté cinq hypothèses fausses formulées à
+ * distance ; il n'a été résolu que le jour où l'appareil a pu désactiver une
+ * propriété à la fois. Toute nouveauté de la 0.5 susceptible de mal se
+ * comporter sur un GPU mobile a donc son interrupteur.
+ */
+const diagFeature = {
+  // Le shader de contamination : la seule injection GLSL du projet, donc le
+  // premier suspect si quelque chose vire au noir ou refuse de compiler.
+  contamination: true,
+  // Ambiance de danger : teinte du brouillard, assombrissement du ciel.
+  danger: true,
+  // Nappes de brume arrière (profondeur) et effacement devant l'objectif.
+  brumeProfonde: true,
+  ciel: true,
+  audio: true
 };
 
 let diagUnlit = false;
@@ -311,7 +339,7 @@ const contamination = {
   // qui va être avalée se décolore. Plus court, la bande mourante était
   // masquée par le brouillard atmosphérique, qui éclaircit précisément là où
   // la contamination assombrit — les deux effets se neutralisaient.
-  range: { value: 62 },
+  range: { value: 62 },   // voir CONTAM_RANGE
   // Vers quoi le monde tend : un gris-prune froid et désaturé.
   color: { value: new THREE.Color(0x4a4658) }
 };
@@ -320,6 +348,10 @@ const contamination = {
  * Rend un matériau sensible à la contamination. À appeler sur tout matériau
  * du monde ; les objets d'interface et le ciel en sont exclus volontairement.
  */
+// Portée nominale, mémorisée pour que le mode diagnostic puisse la couper
+// puis la rétablir.
+const CONTAM_RANGE = contamination.range.value;
+
 function contaminable(material) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uContamFogZ = contamination.fogZ;
@@ -2191,9 +2223,35 @@ function animatePlayer(moving, sprinting, delta) {
   }
 }
 
+/**
+ * Distance caméra-joueur, réduite quand le front de brume s'en approche.
+ *
+ * Le front visible n'est pas `fogZ` mais l'avant-garde, qui déborde de
+ * `FOG_VANGUARD` unités vers le joueur. On garde en plus une marge de
+ * sécurité, sans quoi la caméra rase le plan et le traverse au moindre
+ * à-coup.
+ *
+ * `CAMERA_DISTANCE_MIN` est un plancher assumé : passé ce point le joueur est
+ * dans la brume et perd effectivement la vue — mais il y entre en même temps
+ * que sa caméra, pas douze unités avant.
+ */
+function distanceCameraUtile() {
+  // Le joueur fuit vers les Z décroissants ; la caméra est derrière lui, donc
+  // du côté des Z croissants, uniquement quand elle regarde vers l'avant.
+  const versArriere = Math.cos(cameraYaw);
+  if (versArriere <= 0) return CAMERA_DISTANCE;   // on regarde le mur en face
+
+  const frontZ = game.state.fogZ - FOG_VANGUARD - FOG_CAMERA_MARGE;
+  const place = (frontZ - player.position.z) / (Math.cos(cameraPitch) * versArriere);
+
+  if (!Number.isFinite(place)) return CAMERA_DISTANCE;
+  return Math.max(CAMERA_DISTANCE_MIN, Math.min(CAMERA_DISTANCE, place));
+}
+
 function snapCamera() {
-  const horizontal = Math.cos(cameraPitch) * CAMERA_DISTANCE;
-  const vertical = Math.sin(cameraPitch) * CAMERA_DISTANCE;
+  const distance = distanceCameraUtile();
+  const horizontal = Math.cos(cameraPitch) * distance;
+  const vertical = Math.sin(cameraPitch) * distance;
 
   camera.position.set(
     player.position.x - Math.sin(cameraYaw) * horizontal,
@@ -2383,13 +2441,32 @@ function animate() {
   });
 
   // Étalement de la génération sur plusieurs images.
-  processBuildQueue(2);
+  //
+  // Un chunk de 0.5 coûte nettement plus cher à construire qu'un chunk de
+  // 0.4 : terrain en 16 segments au lieu de 12 (et `faceted` en triple les
+  // sommets), huit familles instanciées au lieu de trois, plus les structures.
+  // En construire deux par image produisait des à-coups visibles — mesuré en
+  // marche continue : 19 images au-dessus de 120 ms contre 7 en 0.4, et un
+  // 99e centile à 242 ms contre 153.
+  processBuildQueue(1);
 
   water.position.x = player.position.x;
   water.position.z = player.position.z;
 
-  const horizontal = Math.cos(cameraPitch) * CAMERA_DISTANCE;
-  const vertical = Math.sin(cameraPitch) * CAMERA_DISTANCE;
+  // --- distance de caméra, bornée par le front de brume ---------------------
+  //
+  // La caméra est 13 unités DERRIÈRE le joueur : la brume l'atteignait donc
+  // une douzaine d'unités avant lui. Mesuré : à 14 de marge la caméra était
+  // déjà 1,8 unité derrière le front, à 2 de marge elle était 9,8 unités
+  // dedans. Le mur opaque s'intercalait entre l'objectif et le personnage, et
+  // le joueur devenait AVEUGLE au moment précis où il devait choisir où
+  // courir. C'est la cause de l'écran noir observé sur l'appareil.
+  //
+  // La caméra se rapproche donc du joueur quand le front approche, exactement
+  // comme une caméra de jeu à la troisième personne se rapproche d'un mur.
+  const distance = distanceCameraUtile();
+  const horizontal = Math.cos(cameraPitch) * distance;
+  const vertical = Math.sin(cameraPitch) * distance;
 
   desiredCamera.set(
     player.position.x - Math.sin(cameraYaw) * horizontal,
@@ -2397,7 +2474,13 @@ function animate() {
     player.position.z + Math.cos(cameraYaw) * horizontal
   );
 
-  camera.position.lerp(desiredCamera, 1 - Math.pow(0.002, delta));
+  // Le rapprochement doit être plus vif que l'éloignement : se faire avaler
+  // par le mur pendant que la caméra rattrape doucement reviendrait au même
+  // défaut. On resserre immédiatement, on desserre en douceur.
+  const suivi = desiredCamera.z < camera.position.z
+    ? 1 - Math.pow(0.002, delta)          // recul : lissage habituel
+    : 1 - Math.pow(0.0000005, delta);     // resserrement : quasi immédiat
+  camera.position.lerp(desiredCamera, suivi);
 
   camera.lookAt(
     player.position.x,
@@ -2414,7 +2497,7 @@ function animate() {
   elapsedTotal += delta;
 
   // Une seule écriture par image, partagée par tous les matériaux du monde.
-  contamination.fogZ.value = game.state.fogZ;
+  if (!DIAG || diagFeature.contamination) contamination.fogZ.value = game.state.fogZ;
 
   // --- ambiance de danger ---------------------------------------------------
   // La tension doit se sentir AVANT de regarder le compteur. Trois choses
@@ -2424,7 +2507,7 @@ function animate() {
   // saturent tous à 70 % de leur amplitude.
   const marge = game.fogGap;
   const proche = 1 - Math.min(1, Math.max(0, (marge - 8) / DANGER_DISTANCE));
-  const t = proche * proche * 0.7;
+  const t = (DIAG && !diagFeature.danger) ? 0 : proche * proche * 0.7;
 
   scene.fog.color.copy(FOG_TINT_SAFE).lerp(FOG_TINT_DANGER, t);
   skyDome.material.color.setRGB(1 - t * 0.55, 1 - t * 0.62, 1 - t * 0.5);
@@ -2495,11 +2578,32 @@ animate();
 // bouton retire une famille d'objets de la scène ; celui qui fait disparaître
 // l'artefact le désigne. Inactif — et non construit — sans le paramètre.
 // ---------------------------------------------------------------------------
+function applyDiagFeatures() {
+  if (!DIAG) return;
+
+  // Contamination désactivée : la portée passe à 0, donc le facteur est nul
+  // partout. Le shader reste compilé — c'est bien lui qu'on veut mettre hors
+  // jeu, pas seulement son effet visible.
+  contamination.range.value = diagFeature.contamination ? CONTAM_RANGE : 0.0001;
+  contamination.fogZ.value = diagFeature.contamination ? game.state.fogZ : -1e9;
+
+  skyDome.visible = diagFeature.ciel;
+  game.setFogDetail(diagFeature.brumeProfonde);
+
+  if (!diagFeature.danger) {
+    scene.fog.color.copy(FOG_TINT_SAFE);
+    sunLight.intensity = SUN_INTENSITY;
+    hemiLight.intensity = HEMI_INTENSITY;
+    skyDome.material.color.setRGB(1, 1, 1);
+  }
+}
+
 function applyDiagVisibility() {
   if (!DIAG) return;
 
   water.visible = diagVisible.eau;
   sun.visible = diagVisible.soleil;
+  applyDiagFeatures();
 
   for (const group of chunks.values()) {
     for (const child of group.children) {
@@ -2541,6 +2645,25 @@ function buildDiagPanel() {
     });
     row.appendChild(button);
   }
+
+  // Nouveautés 0.5, chacune isolable séparément.
+  const row05 = document.createElement("div");
+  row05.className = "diag-row";
+
+  for (const key of Object.keys(diagFeature)) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = key;
+    button.className = "on";
+    button.addEventListener("click", () => {
+      diagFeature[key] = !diagFeature[key];
+      button.className = diagFeature[key] ? "on" : "off";
+      applyDiagFeatures();
+    });
+    row05.appendChild(button);
+  }
+
+  panel.appendChild(row05);
 
   // Éclairage : bascule tous les matériaux en couleur plate, sans lumière.
   // Si le noir disparaît ainsi, il vient du calcul d'éclairement (normales).
@@ -2706,6 +2829,43 @@ window.HORIZON = {
   scene,
 
 
+
+  /**
+   * Rend une image puis mesure la part de pixels quasi noirs. Sert à répondre
+   * à une question précise : le joueur voit-il encore quelque chose ?
+   */
+  darkFraction(seuil = 46) {
+    // Rendu dans une cible hors écran, PAS dans le tampon par défaut : une
+    // fois l'image présentée, le contenu du tampon arrière n'est plus garanti
+    // et readPixels y renvoyait du noir, ce qui donnait 100 % sur des images
+    // manifestement lisibles.
+    const cible = new THREE.WebGLRenderTarget(256, 512);
+    // Sans cet espace colorimétrique, la cible reçoit des valeurs LINÉAIRES
+    // alors que le canevas reçoit du sRGB : une image parfaitement lisible y
+    // mesurait 100 % de pixels sombres.
+    cible.texture.colorSpace = THREE.SRGBColorSpace;
+    const precedent = renderer.getRenderTarget();
+
+    renderer.setRenderTarget(cible);
+    renderer.render(scene, camera);
+
+    const px = new Uint8Array(256 * 512 * 4);
+    renderer.readRenderTargetPixels(cible, 0, 0, 256, 512, px);
+
+    renderer.setRenderTarget(precedent);
+    cible.dispose();
+
+    let sombres = 0;
+    let total = 0;
+
+    for (let i = 0; i < px.length; i += 4 * 7) {
+      const l = 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
+      if (l < seuil) sombres++;
+      total++;
+    }
+
+    return +(100 * sombres / total).toFixed(1);
+  },
 
   /**
    * Rend une image puis relit le tampon : mesure la proportion de pixels
