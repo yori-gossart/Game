@@ -313,15 +313,15 @@ même jeu, ils ne le voient pas aussi bien.
 
 ## 9. Tests
 
-**200 vérifications, 200 PASS**, plus les simulations d'équilibrage.
+**204 vérifications, 204 PASS**, plus les simulations d'équilibrage.
 
 | Fichier | Vérif. | Objet |
 | --- | --- | --- |
 | `tests/suite.mjs` | 32 | moteur : démarrage, tactile, caméra, chunks, sauvegarde |
 | `tests/audit.mjs` | 26 | audit 0.2 : continuité, fuites, sauts, mondes multiples |
-| `tests/fog03.mjs` | 42 | règles 0.3 : brume, dégâts, mort, poids, endurance |
+| `tests/fog03.mjs` | 43 | règles 0.3 : brume, dégâts, mort, poids, endurance |
 | `tests/fog04.mjs` | 47 | 0.4 : ressources sur 100 chunks, objets jetés, cristal, feu |
-| `tests/regressions.mjs` | 19 | défauts historiques, visés par leur mécanisme |
+| `tests/regressions.mjs` | 22 | défauts historiques, visés par leur mécanisme |
 | `tests/balance05.mjs` | 34 | **nouveau** — distribution, pression, bandes, run longue |
 | `tests/simulate05.mjs` | — | **nouveau** — quatre profils sur la vraie `CONFIG` |
 
@@ -341,6 +341,91 @@ croisées. Le test confondait donc ce chargement paresseux avec une fuite.
 
 Il parcourt maintenant 100 chunks **de plus** et compare le 100ᵉ au 200ᵉ : une
 fuite continue de croître, un chargement paresseux non. Mesuré : 44 → 44.
+
+---
+
+## 9 bis. Défaut trouvé sur appareil, après la première préversion
+
+La première 0.5 déployée donnait un **écran entièrement noir** sur téléphone,
+BRUME à 2, run terminée en 26 s pour 58 m — soit 2,2 u/s de moyenne au lieu
+des 6,2 de la marche, avec une avance maximale restée à sa valeur de départ.
+
+### Ce que ce n'était pas
+
+Un scan a précédé toute correction, parce que le symptôme ressemblait à
+l'artefact des fleurs de la 0.2 : **0 échec de compilation de shader, 0 échec
+de liaison, aucun journal GLSL non vide, aucune erreur console.** Le shader de
+contamination n'était pas en cause.
+
+### La cause, mesurée
+
+La caméra est 13 unités **derrière** le personnage. Le mur l'atteignait donc
+une douzaine d'unités avant lui :
+
+| Marge | Position de la caméra par rapport au front |
+| --- | --- |
+| 14 u | déjà 1,8 u **derrière** le front |
+| 6 u | 6,0 u dedans |
+| 2 u | 9,8 u dedans |
+
+Un plan opaque s'intercalait entre l'objectif et le personnage. Le joueur
+devenait aveugle pendant toute la phase finale de chaque run — précisément
+quand il fallait choisir où courir. Les 2,2 u/s s'expliquent seuls : il ne
+voyait plus où aller.
+
+### La correction, en deux mécanismes
+
+Un seul ne suffisait pas :
+
+1. **La caméra se rapproche du joueur** quand le front approche, comme une
+   caméra de troisième personne évite un mur. Le resserrement est quasi
+   immédiat, le desserrement reste lissé — l'inverse laisserait le mur
+   rattraper la caméra pendant qu'elle recule doucement.
+2. Sous la distance plancher, la caméra ne peut plus reculer. **Une nappe qui
+   s'intercale malgré tout s'efface**, d'autant plus qu'elle est proche de
+   l'objectif. Chaque nappe a désormais son propre matériau, son opacité
+   devant varier indépendamment.
+
+Part de pixels quasi noirs, mesurée marge par marge :
+
+| Marge | 40 | 20 | 12 | 6 | 2 |
+| --- | --- | --- | --- | --- | --- |
+| Avant | 1,1 % | 0,0 % | **55,0 %** | **47,6 %** | noir constaté sur l'appareil |
+| Après | 1,1 % | 2,4 % | 8,9 % | 10,3 % | 10,4 % |
+
+À 2 unités l'avant-garde a déjà dépassé le joueur : une gêne y est voulue, le
+noir complet non.
+
+### Les à-coups
+
+Un chunk de 0.5 coûte bien plus cher à construire qu'un chunk de 0.4 : 16
+segments au lieu de 12 (et `faceted` en triple les sommets), huit familles
+instanciées au lieu de trois, plus les structures. En construire **deux** par
+image produisait des saccades visibles.
+
+Mesuré en marche continue, images au-dessus de 120 ms sur ~200 :
+
+| | 0.4 | 0.5, deux par image | 0.5, une par image |
+| --- | --- | --- | --- |
+| Images > 120 ms | 7 | 19 | 11 à 14 |
+| 99ᵉ centile | 153 ms | 242 ms | 161 à 200 ms |
+| Images > 250 ms | 0 | 1 à 2 | 0 |
+
+La classe des images au-dessus de 250 ms disparaît. Le reste de l'écart est
+proportionné au contenu supplémentaire (52 appels de rendu contre 36).
+
+### Ce qui a été ajouté pour la prochaine fois
+
+`?diag` reçoit un **interrupteur par nouveauté 0.5** : contamination,
+ambiance de danger, nappes profondes, ciel, audio. L'artefact des fleurs a
+coûté cinq hypothèses fausses émises à distance ; il n'a été résolu que le
+jour où l'appareil a pu couper une propriété à la fois.
+
+`darkFraction()` répond à une question simple — le joueur voit-il quelque
+chose ? Deux pièges en l'écrivant, tous deux donnant 100 % sur des images
+manifestement lisibles : lire le tampon par défaut après présentation renvoie
+du noir, et une cible de rendu sans espace colorimétrique sRGB renvoie des
+valeurs linéaires.
 
 ---
 

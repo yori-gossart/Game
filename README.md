@@ -145,6 +145,10 @@ Pour piloter sans les doigts : `move(x, y)`, `setRun(bool)`, `setYaw(v)`, `setPi
 
 Ajouter `?diag` à l'URL affiche un bandeau donnant les capacités réelles du GPU (bits de profondeur, MSAA, précision, densité de pixels, nom du chipset) et permet de retirer une famille d'objets à la fois — terrain, troncs, houppiers, rochers, fleurs, eau, soleil — plus l'éclairage et le flou d'arrière-plan de l'interface. Un bouton fait aussi défiler trois rendus de fleurs (fusionné, instancié, un objet par fleur).
 
+Depuis la 0.5, un interrupteur existe aussi pour chaque nouveauté susceptible
+de mal se comporter sur un GPU mobile : contamination, ambiance de danger,
+nappes de brume profondes, ciel, audio.
+
 C'est cet outil qui a permis d'isoler un artefact d'affichage impossible à reproduire hors de l'appareil concerné. Sans le paramètre `?diag`, rien de tout cela n'est construit.
 
 ## Commandes
