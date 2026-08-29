@@ -53,6 +53,60 @@ ok("fleurs: présentes sous forme fusionnée", fleurs.fusionnees > 0 && fleurs.s
    `${fleurs.fusionnees} objets, ${fleurs.sommets} sommets`);
 
 // ---------------------------------------------------------------------------
+console.log("\n=== PROFIL D'INSTANCIATION (B0) ===");
+// B0 n'a jamais été expliqué : on sait seulement que l'InstancedMesh des
+// fleurs — objet minuscule, instancié, avec couleur d'instance — produisait de
+// grands polygones noirs sur le GPU cible, et que la fusion y mettait fin.
+//
+// La 0.5 a ajouté cinq familles instanciées et rétabli ce profil exact avec
+// l'herbe. Ce contrôle empêche qu'il revienne sans qu'on s'en aperçoive : rien
+// de minuscule ne doit être à la fois instancié ET porteur d'une couleur
+// d'instance.
+const profil = await H(() => {
+  const familles = {};
+  window.HORIZON.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    const kind = (o.userData && o.userData.kind) || "(autre)";
+    const f = familles[kind] || (familles[kind] = {
+      instancie: 0, instanceColor: 0, minEchelle: Infinity
+    });
+    if (!o.isInstancedMesh) return;
+
+    f.instancie++;
+    if (o.instanceColor) f.instanceColor++;
+
+    const m = new o.matrixWorld.constructor();
+    for (let i = 0; i < o.count; i++) {
+      o.getMatrixAt(i, m);
+      f.minEchelle = Math.min(f.minEchelle,
+        Math.hypot(m.elements[0], m.elements[1], m.elements[2]));
+    }
+  });
+  return familles;
+});
+
+const aRisque = Object.entries(profil).filter(([, f]) =>
+  f.instanceColor > 0 && f.minEchelle < 0.5);
+
+console.log("   " + Object.entries(profil)
+  .filter(([, f]) => f.instancie > 0)
+  .map(([k, f]) => `${k}:${f.instancie}${f.instanceColor ? "c" : ""}@${f.minEchelle.toFixed(2)}`)
+  .join("  "));
+
+ok("B0: les fleurs ne sont jamais instanciées",
+   (profil.fleurs?.instancie || 0) === 0, `${profil.fleurs?.instancie || 0} InstancedMesh`);
+ok("B0: l'herbe ne l'est pas non plus (même profil que les fleurs)",
+   (profil.herbes?.instancie || 0) === 0, `${profil.herbes?.instancie || 0} InstancedMesh`);
+ok("B0: aucune famille minuscule n'est instanciée avec couleur d'instance",
+   aRisque.length === 0,
+   aRisque.map(([k, f]) => `${k} (échelle ${f.minEchelle.toFixed(2)})`).join(", ") || "aucune");
+
+// Le mode diagnostic doit pouvoir supprimer TOUTE instanciation d'un geste :
+// c'est ce qui a tranché en 0.2, et c'est la seule façon de trancher sur un
+// appareil qu'on n'a pas sous la main.
+const sansInst = await H(() => typeof window.HORIZON.scene === "object");
+ok("B0: la scène reste inspectable depuis la sonde", sansInst);
+
 console.log("\n=== COORDONNÉES NÉGATIVES ===");
 // Cause réelle : un modulo négatif sur l'index de couleur des fleurs renvoyait
 // un indice hors tableau. En 0.2 cela donnait un matériau blanc ; une fois les

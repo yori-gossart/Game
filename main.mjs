@@ -156,6 +156,11 @@ const diagVisible = {
  * comporter sur un GPU mobile a donc son interrupteur.
  */
 const diagFeature = {
+  // Instanciation : l'artefact des grands polygones noirs de la 0.2 venait de
+  // là, et rien n'a jamais expliqué pourquoi. Couper cet interrupteur redessine
+  // tout le monde en géométries fusionnées — le chemin de rendu qui, lui, a
+  // toujours fonctionné sur l'appareil.
+  instanciation: true,
   // Le shader de contamination : la seule injection GLSL du projet, donc le
   // premier suspect si quelque chose vire au noir ou refuse de compiler.
   contamination: true,
@@ -1170,8 +1175,96 @@ const dummy = new THREE.Object3D();
 const desiredCamera = new THREE.Vector3();
 const keyboardVector = { x: 0, z: 0 };
 
+/**
+ * Même contenu qu'un InstancedMesh, mais SANS instanciation : les sommets sont
+ * écrits à leur position finale dans une géométrie unique, et la teinte passe
+ * par les couleurs de sommets.
+ *
+ * C'est exactement le chemin retenu pour les fleurs en 0.2, seul remède trouvé
+ * à l'artefact des grands polygones noirs sur le GPU cible — mécanisme jamais
+ * expliqué (voir AUDIT_PERFORMANCE_BUGS_0.2.md, B0). Le coût est le même en
+ * appels de rendu : un objet par famille et par chunk.
+ */
+function buildMerged(geometry, material, items, applyTransform, colorOf) {
+  if (items.length === 0) return null;
+
+  const source = geometry.attributes.position;
+  const sourceNormal = geometry.attributes.normal;
+  const parSommet = source.count;
+  const total = parSommet * items.length;
+
+  const position = new Float32Array(total * 3);
+  const normal = new Float32Array(total * 3);
+  const color = new Float32Array(total * 3);
+
+  const v = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const normalMatrix = new THREE.Matrix3();
+  let out = 0;
+
+  for (const item of items) {
+    applyTransform(dummy, item);
+    dummy.updateMatrix();
+    normalMatrix.getNormalMatrix(dummy.matrix);
+
+    const tint = colorOf ? colorOf(item) : null;
+
+    for (let i = 0; i < parSommet; i++) {
+      v.set(source.getX(i), source.getY(i), source.getZ(i)).applyMatrix4(dummy.matrix);
+      position[out * 3] = v.x;
+      position[out * 3 + 1] = v.y;
+      position[out * 3 + 2] = v.z;
+
+      n.set(sourceNormal.getX(i), sourceNormal.getY(i), sourceNormal.getZ(i))
+        .applyMatrix3(normalMatrix).normalize();
+      normal[out * 3] = n.x;
+      normal[out * 3 + 1] = n.y;
+      normal[out * 3 + 2] = n.z;
+
+      // Sans teinte d'instance, on écrit du blanc : la couleur du matériau
+      // s'applique alors telle quelle.
+      color[out * 3] = tint ? tint.r : 1;
+      color[out * 3 + 1] = tint ? tint.g : 1;
+      color[out * 3 + 2] = tint ? tint.b : 1;
+
+      out++;
+    }
+  }
+
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute("position", new THREE.BufferAttribute(position, 3));
+  merged.setAttribute("normal", new THREE.BufferAttribute(normal, 3));
+  merged.setAttribute("color", new THREE.BufferAttribute(color, 3));
+
+  const mesh = new THREE.Mesh(merged, materiauFusionne(material));
+  mesh.userData.ownedGeometry = true;
+  return mesh;
+}
+
+// Un matériau fusionné doit lire les couleurs de sommets ; on en garde une
+// version par matériau source, partagée entre tous les chunks.
+const materiauxFusionnes = new Map();
+
+function materiauFusionne(material) {
+  let m = materiauxFusionnes.get(material);
+  if (!m) {
+    m = material.clone();
+    m.vertexColors = true;
+    // Le clone perd le correctif de contamination : on le réapplique.
+    contaminable(m);
+    materiauxFusionnes.set(material, m);
+  }
+  return m;
+}
+
 function buildInstanced(geometry, material, items, applyTransform, colorOf) {
   if (items.length === 0) return null;
+
+  // Mode diagnostic : on retire toute instanciation d'un seul geste, pour
+  // savoir si l'artefact vient de là — c'est ce qui avait tranché en 0.2.
+  if (DIAG && !diagFeature.instanciation) {
+    return buildMerged(geometry, material, items, applyTransform, colorOf);
+  }
 
   const mesh = new THREE.InstancedMesh(geometry, material, items.length);
   mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
@@ -1513,7 +1606,15 @@ function createChunk(cx, cz) {
     (item) => biomeTreeColors[item.biomeIndex]
   );
 
-  const grassMesh = buildInstanced(
+  // L'herbe est fusionnée, jamais instanciée.
+  //
+  // C'est le profil exact des fleurs de la 0.2 : objet minuscule, instancié,
+  // avec couleur d'instance — la combinaison qui produisait de grands
+  // polygones noirs sur le GPU cible, sans que le mécanisme ait jamais été
+  // expliqué. La 0.5 avait rétabli ce profil sans y penser. Le chemin fusionné
+  // coûte le même nombre d'appels de rendu, et c'est celui qui a été validé
+  // sur l'appareil.
+  const grassMesh = buildMerged(
     grassGeometry, crownMaterial, herbes,
     (obj, item) => {
       obj.position.set(item.x, item.y, item.z);
@@ -2659,6 +2760,17 @@ function buildDiagPanel() {
       diagFeature[key] = !diagFeature[key];
       button.className = diagFeature[key] ? "on" : "off";
       applyDiagFeatures();
+
+      // L'instanciation se décide à la construction : il faut rebâtir le
+      // monde. Seed et position sont conservées, pour comparer la même vue.
+      if (key === "instanciation") {
+        const pos = { x: player.position.x, z: player.position.z };
+        clearWorld();
+        refreshChunks(true);
+        flushBuildQueue();
+        player.position.x = pos.x;
+        player.position.z = pos.z;
+      }
     });
     row05.appendChild(button);
   }
