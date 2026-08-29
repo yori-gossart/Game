@@ -1586,7 +1586,14 @@ function createChunk(cx, cz) {
   );
 
   // Le bois mort garde la couleur du tronc : c'est ce qui le distingue de loin.
-  const deadMesh = buildInstanced(
+  //
+  // FUSIONNÉ, jamais instancié. Isolé sur l'appareil (Samsung Xclipse 530,
+  // ANGLE/Vulkan) : c'est cette famille, et elle seule, qui produisait de
+  // grands polygones noirs à arêtes franches. Les données JS sont pourtant
+  // saines — 252 sommets, 0 triangle dégénéré, 0 normale nulle, 0 valeur non
+  // finie — exactement comme pour les fleurs en 0.2, dont le mécanisme n'a
+  // jamais été expliqué non plus.
+  const deadMesh = buildMerged(
     deadTreeGeometry, trunkMaterial, arbresMorts,
     (obj, item) => {
       obj.position.set(item.x, item.y, item.z);
@@ -1596,7 +1603,14 @@ function createChunk(cx, cz) {
     }
   );
 
-  const bushMesh = buildInstanced(
+  // Familles ajoutées en 0.5 : fusionnées par prudence.
+  //
+  // Le jeu de familles instanciées validé sur appareil est celui de la 0.4 —
+  // troncs, houppiers, rochers. Tout ce que la 0.5 a ajouté est passé au
+  // chemin fusionné, qui coûte le même nombre d'appels de rendu (mesuré : 45
+  // contre 46 en fusionnant TOUT) et qui, lui, n'a jamais échoué sur cet
+  // appareil. On ne réintroduira de l'instanciation que si elle se paie.
+  const bushMesh = buildMerged(
     bushGeometry, crownMaterial, arbustes,
     (obj, item) => {
       obj.position.set(item.x, item.y, item.z);
@@ -1637,7 +1651,7 @@ function createChunk(cx, cz) {
     }
   );
 
-  const boulderMesh = buildInstanced(
+  const boulderMesh = buildMerged(
     boulderGeometry, rockMaterial, blocs,
     (obj, bloc) => {
       obj.position.set(bloc.x, bloc.y + 0.15 * bloc.scale, bloc.z);

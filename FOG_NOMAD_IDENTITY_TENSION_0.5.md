@@ -313,7 +313,7 @@ même jeu, ils ne le voient pas aussi bien.
 
 ## 9. Tests
 
-**204 vérifications, 204 PASS**, plus les simulations d'équilibrage.
+**208 vérifications, 208 PASS**, plus les simulations d'équilibrage.
 
 | Fichier | Vérif. | Objet |
 | --- | --- | --- |
@@ -321,7 +321,7 @@ même jeu, ils ne le voient pas aussi bien.
 | `tests/audit.mjs` | 26 | audit 0.2 : continuité, fuites, sauts, mondes multiples |
 | `tests/fog03.mjs` | 43 | règles 0.3 : brume, dégâts, mort, poids, endurance |
 | `tests/fog04.mjs` | 47 | 0.4 : ressources sur 100 chunks, objets jetés, cristal, feu |
-| `tests/regressions.mjs` | 22 | défauts historiques, visés par leur mécanisme |
+| `tests/regressions.mjs` | 28 | défauts historiques, visés par leur mécanisme |
 | `tests/balance05.mjs` | 34 | **nouveau** — distribution, pression, bandes, run longue |
 | `tests/simulate05.mjs` | — | **nouveau** — quatre profils sur la vraie `CONFIG` |
 
@@ -452,7 +452,14 @@ contre 300 « exceptionnel »). Pour les trois autres profils elle reste entre
 viennent de SwiftShader.
 
 **Le mécanisme de l'artefact des fleurs reste inexpliqué** (voir
-`AUDIT_PERFORMANCE_BUGS_0.2.md`, B0). On sait l'éviter, pas pourquoi.
+`AUDIT_PERFORMANCE_BUGS_0.2.md`, B0). On sait l'éviter, pas pourquoi — et la
+0.5 l'a prouvé en le réintroduisant : cinq familles instanciées ajoutées sans
+relire B0, et l'artefact est revenu sur le bois mort. Isolé sur l'appareil,
+corrigé par la fusion, mécanisme toujours inexpliqué (B0 bis).
+
+**Seules trois familles restent instanciées** — celles validées sur appareil en
+0.4. Toute nouvelle famille passe par le chemin fusionné tant qu'un appareil
+réel n'a pas dit le contraire.
 
 **Le son n'a pas été écouté**, seulement exécuté sans erreur. Un test
 automatisé ne juge pas un mixage.

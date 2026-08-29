@@ -2,7 +2,7 @@
 
 Six suites, exécutées sur Chromium en émulation Pixel 7 avec entrées tactiles,
 plus un simulateur d'équilibrage qui tourne sans navigateur.
-**204 vérifications au total.**
+**208 vérifications au total.**
 
 | Suite | Vérifications | Couvre |
 | --- | --- | --- |
@@ -10,7 +10,7 @@ plus un simulateur d'équilibrage qui tourne sans navigateur.
 | `audit.mjs` | 26 | audit 0.2 : mémoire, quadrants, déterminisme, NOUVEAU répété, performance |
 | `fog03.mjs` | 43 | Fog Nomad 0.3 : brume, dégâts, mort, restart, ressources, poids, sac, endurance, jeter |
 | `fog04.mjs` | 47 | Fog Nomad 0.4 : ressources sur 100 chunks, objets jetés, cristal, feu, 10 cycles mort/restart |
-| `regressions.mjs` | 22 | défauts historiques déjà corrigés, visés par leur **mécanisme** |
+| `regressions.mjs` | 28 | défauts historiques déjà corrigés, visés par leur **mécanisme** |
 | `balance05.mjs` | 34 | Fog Nomad 0.5 : distribution des ressources, courbe de pression, bandes de marge, run longue, qualité |
 | `simulate05.mjs` | — | quatre profils de jeu simulés sur la vraie `CONFIG`, sans navigateur |
 

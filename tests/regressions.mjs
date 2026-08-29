@@ -93,8 +93,22 @@ console.log("   " + Object.entries(profil)
   .map(([k, f]) => `${k}:${f.instancie}${f.instanceColor ? "c" : ""}@${f.minEchelle.toFixed(2)}`)
   .join("  "));
 
+// Seules les trois familles validées sur appareil en 0.4 ont le droit d'être
+// instanciées. Tout ce que la 0.5 a ajouté passe par le chemin fusionné —
+// le bois mort a été isolé sur l'appareil comme produisant les grands
+// polygones noirs, et rien ne dit que les autres nouveautés en soient
+// exemptes. Le chemin fusionné coûte le même nombre d'appels de rendu.
+const AUTORISEES = ["troncs", "houppiers", "rochers"];
+const interdites = Object.entries(profil)
+  .filter(([k, f]) => f.instancie > 0 && !AUTORISEES.includes(k));
+
+ok("B0: seules les familles validées en 0.4 sont instanciées",
+   interdites.length === 0,
+   interdites.map(([k, f]) => `${k} (${f.instancie})`).join(", ") || AUTORISEES.join(", "));
 ok("B0: les fleurs ne sont jamais instanciées",
    (profil.fleurs?.instancie || 0) === 0, `${profil.fleurs?.instancie || 0} InstancedMesh`);
+ok("B0: le bois mort ne l'est pas non plus (isolé sur l'appareil)",
+   (profil.boismort?.instancie || 0) === 0, `${profil.boismort?.instancie || 0} InstancedMesh`);
 ok("B0: l'herbe ne l'est pas non plus (même profil que les fleurs)",
    (profil.herbes?.instancie || 0) === 0, `${profil.herbes?.instancie || 0} InstancedMesh`);
 ok("B0: aucune famille minuscule n'est instanciée avec couleur d'instance",

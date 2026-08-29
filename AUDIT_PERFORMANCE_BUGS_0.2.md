@@ -356,3 +356,39 @@ Ressources échantillonnées au démarrage puis après 10, 25, 50 et 100 chunks 
 `speckle()` — proportion de pixels voisins discordants
 `compareNearFar(a, b)` — compare deux réglages de profondeur sur la même image
 `jitterTest(delta)` — instabilité sous micro-déplacement de caméra
+
+---
+
+## B0 bis — récidive en 0.5, sur une autre famille
+
+La 0.5 a ajouté cinq familles instanciées sans que B0 soit relu. L'artefact
+est revenu : grands polygones noirs à arêtes franches découpant le monde,
+signature identique.
+
+**Isolé sur l'appareil**, avec le nouvel interrupteur par famille du mode
+`?diag` — Samsung Xclipse 530, ANGLE sur Vulkan 1.3.279, OpenGL ES 3.2 :
+c'est le **bois mort**, et lui seul. L'instanciation restait active pour tout
+le reste pendant le test, donc ce n'est pas l'instanciation en général.
+
+**Les données JS sont saines**, comme pour les fleurs : 252 sommets, 0 triangle
+dégénéré, 0 normale nulle, 0 valeur non finie, attributs `position+normal`
+identiques aux familles qui fonctionnent. Le mécanisme reste **inexpliqué**,
+exactement comme en 0.2.
+
+Exposition mesurée, 25 chunks, même seed :
+
+| | 0.4 (validée) | 0.5 (artefact) | 0.5 corrigée |
+| --- | --- | --- | --- |
+| InstancedMesh en scène | 59 | 92 | 50 |
+| instances totales | 359 | 584 | 364 |
+| familles à couleur d'instance | 1 | 3 | 1 |
+
+**Règle retenue** : seules les trois familles instanciées validées sur appareil
+en 0.4 — troncs, houppiers, rochers — le restent. Tout ce qui a été ajouté
+depuis passe par le chemin fusionné. Ce n'est pas une préférence esthétique :
+fusionner coûte le même nombre d'appels de rendu (mesuré : 45 contre 46 en
+fusionnant absolument tout), et c'est le seul chemin qui n'ait jamais échoué
+sur cet appareil.
+
+Une non-régression l'impose désormais : toute famille instanciée hors de cette
+liste fait échouer les tests.
