@@ -70,7 +70,12 @@ async function balayage(nom, pas) {
   const typesVus = new Set(releves.flatMap((r) => Object.keys(r.types)));
 
   ok(`ressources: ${nom} — jamais de zone vide`, mini > 0, `minimum ${mini} ressources actives`);
-  ok(`ressources: ${nom} — les trois types présents`, typesVus.size === 3,
+  // On vérifie les trois ressources du compromis central. La ration (0.5) est
+  // une quatrième entrée de CONFIG.resources, mais elle n'est pas issue de
+  // l'échantillonnage latéral : elle est posée dans les abris. Sa présence ou
+  // son absence ne dit rien de la densité du monde ouvert.
+  ok(`ressources: ${nom} — les trois types présents`,
+     ["bois", "pierre", "cristal"].every((t) => typesVus.has(t)),
      [...typesVus].join(", "));
   return releves;
 }

@@ -19,8 +19,9 @@ export const ENGINE = { playerSpeed: 6.2, runMultiplier: 1.8, chunkSize: 32 };
 // Densité de ressources mesurée en scène : ~1,5 pose par chunk de 32×32.
 const DENSITE = 1.5 / (ENGINE.chunkSize * ENGINE.chunkSize);
 
-// Part de chaque type dans les poses, mesurée sur 4 seeds × 3 axes × 100 chunks.
-const PART = { bois: 0.351, pierre: 0.584, cristal: 0.065 };
+// Part de chaque type dans les poses, re-mesurée par tests/balance05.mjs sur
+// 9 relevés et 6 393 poses : cristal 4,4 % (3,1 à 5,8 selon le relevé).
+const PART = { bois: 0.358, pierre: 0.598, cristal: 0.044 };
 
 /**
  * Un profil décrit une politique, pas un scénario scripté.

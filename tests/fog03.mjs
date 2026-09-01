@@ -118,7 +118,18 @@ const byType = {};
 for (const r of sample) (byType[r.type] = byType[r.type] || []).push(r.lateral);
 console.log(`   échantillon : ${sample.length} ressources ` +
   `(${(byType.cristal || []).length} cristaux)`);
-ok("ressources: trois types présents", Object.keys(byType).length === 3, Object.keys(byType).join(", "));
+// La ration (0.5) est une quatrième entrée de `CONFIG.resources`, mais elle ne
+// pousse pas dans le monde ouvert : elle est posée à la main dans les abris, et
+// son abondance latérale est nulle. Ce que ce test vérifie reste donc que les
+// TROIS ressources du compromis central sont bien réparties dans le monde.
+const LATERALES = ["bois", "pierre", "cristal"];
+ok("ressources: les trois ressources du compromis sont présentes",
+   LATERALES.every((t) => (byType[t] || []).length > 0),
+   Object.keys(byType).join(", "));
+ok("ressources: la ration ne pousse pas en terrain découvert",
+   (byType.ration || []).length === 0 ||
+   (byType.ration || []).length / sample.length < 0.05,
+   `${(byType.ration || []).length} rations sur ${sample.length} ressources vues`);
 const moy = (a) => a.reduce((x,y)=>x+y,0)/a.length;
 const mBois = moy(byType.bois||[0]), mPierre = moy(byType.pierre||[0]), mCristal = moy(byType.cristal||[0]);
 ok("ressources: les rares sont plus latérales", mCristal > mPierre && mPierre > mBois,

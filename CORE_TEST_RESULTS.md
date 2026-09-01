@@ -3,8 +3,8 @@
 Ce fichier recueille les **résultats réels de jeu**, pas les résultats techniques.
 Ceux-ci sont dans `FOG_NOMAD_CORE_TEST_0.3.md`.
 
-État : **deux sessions internes enregistrées, sur la 0.3 et la 0.4.** Le
-prototype est techniquement prêt ; son intérêt en tant que jeu n'est pas
+État : **trois sessions internes enregistrées, sur la 0.3, la 0.4 et la 0.5.**
+Le prototype est techniquement prêt ; son intérêt en tant que jeu n'est pas
 établi. Aucune des cinq questions n'a de réponse.
 
 ---
@@ -105,6 +105,67 @@ Les références en § renvoient à `FOG_NOMAD_IDENTITY_TENSION_0.5.md`.
 La durée des runs n'a pas été relevée, ni le nombre de ressources ramassées,
 ni la cause de mort. Les cinq questions restent donc entières : cette session
 a servi à constater des défauts, pas à évaluer la boucle de jeu.
+
+---
+
+## Session interne — 0.5 Identity & Tension — téléphone Android
+
+> **Ce ne sont pas des tests utilisateurs externes.** Ce sont deux runs de
+> l'auteur du projet sur son propre appareil, sur une version qu'il a lui-même
+> commandée. Il connaît le jeu, ses réglages et ses intentions. Ces chiffres
+> servent à orienter l'équilibrage — **ils ne disent rien de la façon dont un
+> joueur extérieur réagirait**, et les cinq questions restent sans réponse.
+
+**Chiffres relevés**
+
+| Run | Durée | Distance | Ramassées | Jetées | Poids max | Cristaux | Feux | Avance max |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A | 12 min 47 | 4 570 m | 62 | 42 | — | 16 | 1 | 595 m |
+| B | 10 min 31 | 3 413 m | 39 | 15 | 87 / 100 | 6 | 6 | 272 m |
+
+**Ce que ces chiffres montrent**
+
+- **Les runs sont deux fois trop longues.** La fourchette visée est de 3 à
+  8 minutes ; on est à 12 min 47 et 10 min 31.
+- **595 mètres d'avance en run A.** C'est le chiffre décisif. À cette distance
+  la brume n'est plus une menace, c'est un décor lointain. Elle explique la
+  durée : la run ne s'est pas terminée par la pression, mais par lassitude ou
+  par une erreur ponctuelle.
+- **La cause en est identifiée, et corrigée en 0.5 Living World.** La brume
+  atteignait un palier plat, donc un **régime stable** : une fois l'avance
+  prise, elle ne se perdait plus jamais. Le correctif retire ce palier — au-delà
+  de la rampe la pression continue de dériver, très lentement (0,054 u/s par
+  minute), sans plafond de conception et sans dépendre de l'avance du joueur.
+  Modélisé après correctif, le profil le plus fuyant tombe de 450 à **377 m**
+  d'avance maximale.
+- **42 objets jetés sur 62 ramassés en run A.** Le geste d'abandon est
+  massivement utilisé. Sur deux runs d'un seul joueur qui connaît le système,
+  cela ne répond pas à la question 3 — mais c'est le premier signe qu'il ne
+  s'agit pas d'une mécanique morte.
+- **87 / 100 de charge maximale en run B**, contre 54 en 0.3. Le compromis
+  poids/valeur est enfin sollicité.
+- **16 cristaux en run A**, un toutes les 48 secondes. C'est ce relevé qui a
+  motivé la mesure de rareté : les poses de cristal sont passées de 24,9 % à
+  4,4 %, et la poussée de 42 à 26 unités.
+- **6 feux en run B contre 1 en run A** : deux façons de jouer très
+  différentes, sur deux runs. Trop peu pour en conclure quoi que ce soit.
+
+**Ce qui n'a pas été relevé**
+
+La cause de mort, la marge minimale, le nombre de détours. Et surtout : aucun
+ressenti sur les cinq questions.
+
+**Défauts d'affichage signalés dans la même session**
+
+| Défaut observé sur l'appareil | Traité |
+| --- | --- |
+| Écran entièrement noir à faible marge de brume | oui — la brume avalait la caméra avant le joueur, voir `FOG_NOMAD_LIVING_WORLD_0.5.md` §0.1 |
+| Grands polygones noirs à arêtes franches | oui — récidive de l'artefact B0, isolée sur le bois mort **par l'utilisateur via `?diag`**, voir §0.2 |
+
+Le second point mérite d'être noté comme un résultat de session à part
+entière : c'est l'appareil, et non le raisonnement, qui a désigné la famille
+fautive. Aucun test automatisé n'aurait pu le faire — le défaut ne se reproduit
+pas hors de ce GPU.
 
 ---
 

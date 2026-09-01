@@ -3191,7 +3191,10 @@ window.HORIZON = {
   /** Recensement de ce qui est réellement en scène (voir ?worldtest). */
   get monde() { return recenserMonde(); },
   get mode() { return modeCourant(); },
-  get game() { return game; },
+  // `game` est déjà pris par l'état de run (HORIZON.game === game.state) :
+  // l'écraser cassait silencieusement quatre tests qui le lisaient. L'API
+  // complète est exposée sous un autre nom.
+  get jeu() { return game; },
   get bagTier() { return game.bagTier(); },
   get speedFactor() { return game.speedFactor(); },
   get canSprint() { return game.canSprint(); },

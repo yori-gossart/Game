@@ -392,3 +392,41 @@ sur cet appareil.
 
 Une non-régression l'impose désormais : toute famille instanciée hors de cette
 liste fait échouer les tests.
+
+---
+
+## P8 — Une ressource orpheline dans le registre de chunk (0.5 Living World)
+
+**Symptôme.** Aucun. C'est ce qui rend ce défaut intéressant : rien à l'écran,
+rien dans la console, aucune baisse de fluidité mesurable sur une session
+courte. Seul le contrôle de cohérence de `tests/fog04.mjs` l'a vu —
+`ressourcesListees` ne valait plus `ressourcesActives`.
+
+**Cause.** La ration (0.5) est posée par le moteur au moment où il bâtit un
+abri, donc **avant** que `game.populateChunk()` ne peuple le chunk. Or
+`populateChunk` écrivait son registre avec un `set` :
+
+```js
+if (placed.length > 0) chunkResources.set(key, placed);   // écrase
+```
+
+La liste contenant la ration était remplacée. La ration restait dans
+`activeResources` et dans le groupe du chunk, mais plus dans le registre par
+chunk — donc `onChunkDisposed()` ne la retirait jamais. Un objet ajouté à un
+ensemble à chaque abri traversé, et jamais retiré : une fuite lente,
+proportionnelle à la distance parcourue.
+
+**Correctif.** Le registre est complété, jamais écrasé :
+
+```js
+const deja = chunkResources.get(key);
+if (deja) deja.push(...placed);
+else chunkResources.set(key, placed);
+```
+
+**Ce que ce défaut enseigne.** Un `set` sur un registre partagé suppose être le
+seul écrivain. Cette hypothèse était vraie quand `populateChunk` était le seul
+à poser des ressources ; elle a cessé de l'être sans que rien ne le signale.
+Les deux contrôles qui l'ont attrapé — `ressourcesListees === ressourcesActives`
+et `ressourcesActives` stable sur dix cycles — ne mesurent pas une performance
+mais une **cohérence de comptabilité**. Ils valent leur coût.

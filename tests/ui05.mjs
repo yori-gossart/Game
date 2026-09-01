@@ -118,7 +118,7 @@ ok("sac: fermé au démarrage", ferme.panneau === true && ferme.bouton === false
 
 // On remplit le sac pour que le menu ait quelque chose à montrer.
 await H(async () => {
-  const g = window.HORIZON.game;
+  const g = window.HORIZON.jeu;
   g.state.inventory.bois = 3;
   g.state.inventory.pierre = 1;
   g.state.weight = 34;
@@ -142,7 +142,7 @@ ok("sac: le poids est affiché", /\d+ \/ \d+/.test(ouvert.poids), ouvert.poids);
 // On mesure l'avance réelle de la brume sur une seconde de mur, sac ouvert
 // puis sac fermé. Le rapport doit valoir l'échelle du mode, pas zéro.
 const mesure = await H(async () => {
-  const g = window.HORIZON.game;
+  const g = window.HORIZON.jeu;
 
   async function avanceSurUneSeconde() {
     const z0 = g.state.fogZ;
@@ -180,7 +180,7 @@ ok("sac: le menu se referme", referme.panneau === true && referme.bouton === fal
 console.log("\n=== RATION ===");
 
 const ration = await H(async () => {
-  const g = window.HORIZON.game;
+  const g = window.HORIZON.jeu;
   const { CONFIG } = await import("/fognomad.mjs");
   const spec = CONFIG.resources.ration;
 

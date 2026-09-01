@@ -910,7 +910,17 @@ export function createFogNomad(ctx) {
       activeResources.add(mesh);
     }
 
-    if (placed.length > 0) chunkResources.set(key, placed);
+    // On COMPLÈTE le registre du chunk au lieu de l'écraser : un objet peut y
+    // avoir été posé avant l'appel — c'est le cas de la ration, placée par le
+    // moteur au moment où il bâtit un abri. Un `set` orphelinait alors la
+    // ration : encore comptée active, plus jamais listée, donc jamais libérée
+    // avec son chunk. Le contrôle `ressourcesListees === ressourcesActives` de
+    // tests/fog04.mjs l'a attrapé.
+    if (placed.length > 0) {
+      const deja = chunkResources.get(key);
+      if (deja) deja.push(...placed);
+      else chunkResources.set(key, placed);
+    }
 
     spawnStats.generees += placed.length;
     spawnStats.rejetsCouloir += rejetsCouloir;

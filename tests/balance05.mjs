@@ -73,8 +73,12 @@ for (const seed of SEEDS) {
     const st = await H(() => window.HORIZON.spawnStats);
     const t = st.parType || {};
     const n = (t.bois || 0) + (t.pierre || 0) + (t.cristal || 0);
-    releves.push({ seed, axe: nom, n, cristal: n ? (t.cristal || 0) / n : 0,
-                   types: Object.keys(t).length });
+    // On ne compte que les trois ressources latérales : `parType` peut aussi
+    // contenir des rations, posées dans les abris et non tirées par
+    // l'échantillonnage. Les inclure ferait échouer l'assertion « trois types »
+    // au hasard des abris traversés.
+    const types = ["bois", "pierre", "cristal"].filter((k) => t[k] > 0).length;
+    releves.push({ seed, axe: nom, n, cristal: n ? (t.cristal || 0) / n : 0, types });
   }
 }
 
@@ -87,11 +91,17 @@ console.log(`   ${totalPoses} poses sur ${releves.length} relevés · ` +
   `cristal ${(100 * partGlobale).toFixed(1)} % ` +
   `(min ${(100 * Math.min(...parts)).toFixed(1)} %, max ${(100 * Math.max(...parts)).toFixed(1)} %)`);
 
+// Fourchette visée en 0.5 Living World : 3 à 6 % des poses, mesuré sur
+// plusieurs graines et au moins 100 chunks chacune. Le libellé précédent
+// annonçait « 5 à 8 % » alors que la borne testée était 4 à 9 : le message
+// disait autre chose que l'assertion.
 ok("ressources: le cristal est rare globalement",
-   partGlobale >= 0.04 && partGlobale <= 0.09,
-   `${(100 * partGlobale).toFixed(1)} % (cible 5 à 8 %)`);
+   partGlobale >= 0.03 && partGlobale <= 0.06,
+   `${(100 * partGlobale).toFixed(1)} % (cible 3 à 6 %, sur ${totalPoses} poses)`);
 ok("ressources: aucun relevé ne dépasse 12 % de cristal",
    Math.max(...parts) < 0.12, `max ${(100 * Math.max(...parts)).toFixed(1)} %`);
+// `types` compte les trois ressources latérales ; la ration n'en est pas une
+// (abondance nulle, posée dans les abris) et n'apparaît pas dans `parType`.
 ok("ressources: les trois types sont générés sur chaque relevé",
    releves.every((r) => r.types === 3),
    releves.filter((r) => r.types !== 3).map((r) => `${r.seed}/${r.axe}`).join(", ") || "tous");
