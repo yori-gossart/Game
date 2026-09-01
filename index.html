@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Fog Nomad — Identity &amp; Tension 0.5</title>
+  <title>Fog Nomad — Living World 0.5</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%238bc6df'/%3E%3Ccircle cx='44' cy='19' r='8' fill='%23ffe9ac'/%3E%3Cpath d='M0 44 L18 30 L34 44 L48 34 L64 45 L64 64 L0 64 Z' fill='%2374a45d'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="./style.css" />
 </head>
@@ -60,6 +60,21 @@
         <span class="txt">FEU</span>
       </button>
     </div>
+
+    <button id="open-bag" type="button" aria-label="Ouvrir le sac">
+      <span class="glyph">▤</span>
+      <span class="txt">SAC</span>
+    </button>
+
+    <section id="bag-panel" hidden aria-label="Contenu du sac">
+      <header>
+        <h2>SAC</h2>
+        <span id="bag-weight">0 / 100</span>
+        <button id="close-bag" type="button" aria-label="Fermer le sac">×</button>
+      </header>
+      <div id="bag-items"></div>
+      <p class="bag-note">Le temps ralentit, il ne s'arrête pas.</p>
+    </section>
 
     <div id="pickup-feed" aria-live="polite"></div>
     <div id="pulse-flash" aria-hidden="true"></div>

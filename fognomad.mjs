@@ -11,6 +11,8 @@
  * quelques minutes ?
  */
 
+import { modeCourant } from "./modes.mjs";
+
 // ---------------------------------------------------------------------------
 // Configuration — tout ce qui s'équilibre est ici, et nulle part ailleurs.
 // ---------------------------------------------------------------------------
@@ -24,7 +26,7 @@ export const CONFIG = {
     // se fait rattraper en 33 s depuis la marge initiale.
     // Vitesse de départ, volontairement plus clémente que les 4,6 de la 0.4 :
     // c'est la montée en pression qui borne la run, plus la vitesse initiale.
-    speed: 4.9,             // unités/seconde au début de la run
+    speed: 5.2,             // unités/seconde au début de la run
     // --- Pression temporelle (0.5) -----------------------------------------
     // La 0.4 avançait à vitesse constante : un joueur prudent gardait +1,6 u/s
     // indéfiniment et n'était jamais rattrapé. La run ne se terminait que par
@@ -40,12 +42,12 @@ export const CONFIG = {
     //
     // borné à speedMax. Avec les valeurs ci-dessous :
     //
-    //   0–1 min   4,90 u/s   grâce : on apprend la carte
-    //   2 min     5,17 u/s   encore permissif
-    //   4 min     5,93 u/s   pression normale
-    //   5 min     6,32 u/s   la marche à vide ne suffit plus
-    //   7 min     7,17 u/s   il faut avoir lâché du poids
-    //   9 min+    8,00 u/s   plafond
+    //   0–1 min   5,20 u/s   grâce : on apprend la carte
+    //   3 min     5,88 u/s   encore permissif
+    //   5 min     6,68 u/s   la marche à vide ne suffit plus
+    //   8 min     7,95 u/s   il faut avoir lâché du poids
+    //   12 min    8,45 u/s   dérive lente
+    //   20 min    8,88 u/s   plus aucun régime stable
     //
     // Vitesses du joueur, pour référence : 6,2 u/s à vide, 2,85 u/s à sac
     // plein, 11,16 u/s en sprint. Le plafond passe volontairement AU-DESSUS
@@ -53,15 +55,23 @@ export const CONFIG = {
     // ne ramasse rien n'est jamais rattrapé, et c'était le défaut de la 0.4.
     // Passé ce point, tenir la distance demande de sprinter, donc du souffle,
     // donc un sac léger. La dernière décision reste au joueur.
-    pressureDelay: 60,      // secondes de grâce avant toute montée
-    pressureRamp: 480,      // secondes pour aller de 0 à 1 sur la rampe
-    pressureCurve: 1.25,    // > 1 : montée douce au début, plus franche ensuite
-    speedGain: 3.1,         // unités/seconde ajoutées au bout de la rampe
+    pressureDelay: 45,      // secondes de grâce avant toute montée
+    pressureRamp: 450,      // secondes pour aller de 0 à 1 sur la rampe
+    pressureCurve: 1.3,     // > 1 : montée douce au début, plus franche ensuite
+    speedGain: 3.0,         // unités/seconde ajoutées au bout de la rampe
+    // Au-delà de la rampe, la pression continue de monter, très lentement et
+    // SANS PLAFOND. Les runs réelles atteignaient 595 unités d'avance ; un
+    // palier plat laissait un régime stable où l'avance ne se perdait plus.
+    // 0,0009 u/s² ajoute environ 3 unités par heure de jeu — imperceptible sur
+    // une minute, décisif sur vingt.
+    pressureCreep: 0.0009,
     // Plafond dur. Il vaut exactement speed + speedGain : la rampe l'atteint
     // au bout de pressureDelay + pressureRamp et n'y touche plus. Le laisser
     // au-dessus (8,3 pour un plateau réel de 8,0) en faisait un réglage mort
     // qui décrivait mal le comportement — un test l'a relevé.
-    speedMax: 8.0,          // plafond dur, jamais dépassé
+    // Garde-fou numérique, pas un plafond de conception : à ce régime plus rien
+    // ne peut fuir, sprint compris. Il faudrait près d'une heure pour l'atteindre.
+    speedMax: 14,
     damagePerSecond: 32,    // points de vie par seconde passée dedans
     // Corps de la brume : prune très sombre et saturé, pour trancher avec le
     // ciel pâle et le sol vert de la zone sûre.
@@ -133,8 +143,10 @@ export const CONFIG = {
   // 0.5 — le cristal était 24,9 % des ressources générées (mesuré sur 8 734
   // poses, 4 seeds, 3 axes). À ce taux ce n'est plus une trouvaille, c'est du
   // consommable : on en avait toujours un en réserve, et la brume n'était
-  // jamais vraiment une menace. Son abondance passe de 0,36 à 0,070, ce qui
-  // donne 6,6 % des poses (mesuré, 4 seeds × 3 axes × 100 chunks). La densité globale monte de 0,30 à 0,345 pour que
+  // jamais vraiment une menace. Son abondance est passée de 0,36 à 0,070 en 0.5, soit 6,5 % des poses.
+  // Les runs réelles montrent encore jusqu'à SEIZE cristaux consommés en une
+  // partie : à ce rythme ce n'est pas une trouvaille, c'est une consommable.
+  // 0,048 vise 4 à 5 %. La densité globale monte de 0,30 à 0,345 pour que
   // le monde ne se vide pas d'autant : le cristal doit devenir rare, pas les
   // ressources.
   resources: {
@@ -143,7 +155,21 @@ export const CONFIG = {
     pierre:  { label: "Pierre",  weight: 13, value: 4,  color: 0x8d9299,
                lateralPeak: 32, lateralSpread: 28, abundance: 0.78, size: 0.3 },
     cristal: { label: "Cristal", weight: 5,  value: 18, color: 0x63e8d6,
-               lateralPeak: 64, lateralSpread: 32, abundance: 0.070, size: 0.5 }
+               lateralPeak: 64, lateralSpread: 32, abundance: 0.048, size: 0.5 },
+
+    // La ration ne pousse pas dans le monde ouvert : `abundance: 0` la retire
+    // de l'échantillonnage latéral sans rien changer aux trois cloches
+    // existantes (un poids nul ne déplace ni le total ni les proportions).
+    // Elle est posée à la main dans les abris — voir poserRation().
+    //
+    // C'est le seul moyen de récupérer des points de vie : la brume est la
+    // seule chose qui en retire, et rien ne les rend. Sans elle, un passage
+    // dans la brume grève le reste de la run définitivement. Elle vaut son
+    // poids : 6 kg pour 34 points, contre 5 kg pour un cristal qui vaut 18 de
+    // valeur. Emporter de quoi se soigner, c'est renoncer à du butin.
+    ration:  { label: "Ration",  weight: 6,  value: 2,  color: 0xd8b46a,
+               lateralPeak: 0,  lateralSpread: 1,  abundance: 0, size: 0.26,
+               soin: 34 }
   },
 
   // Tentatives de pose par chunk, et densité globale appliquée au poids total.
@@ -214,7 +240,10 @@ export function lateralWeights(lateral) {
   for (const key of RESOURCE_KEYS) {
     const spec = CONFIG.resources[key];
     const d = (lateral - spec.lateralPeak) / spec.lateralSpread;
-    const w = spec.abundance * Math.exp(-d * d);
+    // Le mode ne redessine pas la carte des ressources : il ne pèse que sur la
+    // rareté du cristal. La forme des cloches reste une règle de monde.
+    const rarete = key === "cristal" ? modeCourant().crystalAbundance : 1;
+    const w = spec.abundance * rarete * Math.exp(-d * d);
 
     weights[key] = w;
     total += w;
@@ -254,9 +283,18 @@ export function bandFor(gap) {
 
 export function fogSpeedAt(elapsed) {
   const f = CONFIG.fog;
+  const mode = modeCourant();
   const t = Math.max(0, elapsed - f.pressureDelay);
+
+  // Première phase : montée en puissance sur la rampe.
   const ramp = Math.min(1, t / f.pressureRamp);
-  return Math.min(f.speedMax, f.speed + f.speedGain * Math.pow(ramp, f.pressureCurve));
+  let v = (f.speed + f.speedGain * Math.pow(ramp, f.pressureCurve)) * mode.fogSpeed;
+
+  // Seconde phase : au-delà de la rampe, une dérive lente et continue. C'est
+  // elle qui interdit un régime stable où l'avance ne se perd plus jamais.
+  if (t > f.pressureRamp) v += (t - f.pressureRamp) * f.pressureCreep * mode.fogCreep;
+
+  return Math.min(f.speedMax, v);
 }
 
 export function speedFromWeight(ratio) {
@@ -309,6 +347,13 @@ export function createFogNomad(ctx) {
       { geo: new THREE.OctahedronGeometry(0.34, 0), scale: [0.72, 2.5, 0.72], pos: [0, 0.34, 0] },
       { geo: new THREE.OctahedronGeometry(0.18, 0), scale: [0.7, 1.7, 0.7], rot: [0, 0, 0.42], pos: [0.26, -0.06, 0.06] },
       { geo: new THREE.OctahedronGeometry(0.14, 0), scale: [0.7, 1.5, 0.7], rot: [0, 0, -0.5], pos: [-0.23, -0.12, -0.07] }
+    ]),
+    // Un ballot sanglé : rien de brillant, rien qui appelle de loin. On ne la
+    // trouve qu'en fouillant un abri.
+    ration: assemble([
+      { geo: new THREE.BoxGeometry(0.42, 0.3, 0.32), pos: [0, 0.02, 0] },
+      { geo: new THREE.BoxGeometry(0.44, 0.07, 0.1), pos: [0, 0.03, 0] },
+      { geo: new THREE.CylinderGeometry(0.07, 0.07, 0.34, 6), rot: [0, 0, Math.PI / 2], pos: [0, 0.2, 0] }
     ])
   };
 
@@ -722,6 +767,9 @@ export function createFogNomad(ctx) {
     collected: 0,
     dropped: 0,
     sprintTime: 0,
+    // Sursis déjà consommés dans cette run (voir die()). Toujours 0 en NORMAL.
+    sursis: 0,
+    rationsMangees: 0,
     minFogGap: Infinity,
     maxFogGap: 0,
     gapSum: 0,
@@ -782,6 +830,8 @@ export function createFogNomad(ctx) {
     state.collected = 0;
     state.dropped = 0;
     state.sprintTime = 0;
+    state.sursis = 0;
+    state.rationsMangees = 0;
     state.minFogGap = Infinity;
     state.maxFogGap = 0;
     state.gapSum = 0;
@@ -827,7 +877,8 @@ export function createFogNomad(ctx) {
       const { weights, total } = lateralWeights(lateral);
 
       const roll = random01(cx * 31 + i * 17, cz * 47 - i * 23, 211);
-      if (roll > Math.min(1, total * CONFIG.spawnDensity)) { rejetsCouloir++; continue; }
+      const densite = CONFIG.spawnDensity * modeCourant().resourceDensity;
+      if (roll > Math.min(1, total * densite)) { rejetsCouloir++; continue; }
 
       // Second tirage : quel type, proportionnellement aux poids.
       let pick = random01(cx * 13 - i * 29, cz * 61 + i * 11, 233) * total;
@@ -1072,6 +1123,48 @@ export function createFogNomad(ctx) {
     return true;
   }
 
+  // -------------------------------------------------------------------------
+  // Ration : le seul soin du jeu.
+  // -------------------------------------------------------------------------
+
+  function canEat() {
+    return !state.dead &&
+           (state.inventory.ration || 0) > 0 &&
+           state.health < CONFIG.player.maxHealth;
+  }
+
+  /**
+   * Manger une ration. Refusée à pleine santé : sinon on la gaspille d'une
+   * mauvaise pression sur un bouton, et le joueur perd la seule ressource qui
+   * pouvait le sauver plus tard.
+   */
+  function eatRation() {
+    if (!canEat()) return false;
+
+    const spec = CONFIG.resources.ration;
+    state.inventory.ration--;
+    state.weight = Math.max(0, state.weight - spec.weight);
+    state.health = Math.min(CONFIG.player.maxHealth, state.health + spec.soin);
+    state.rationsMangees++;
+
+    jouer("collecte");
+    updateBagVisual();
+    emit();
+    return true;
+  }
+
+  /**
+   * Pose une ration dans un abri. Appelée par le moteur au moment où il bâtit
+   * une structure : c'est la seule origine de cet objet dans le monde.
+   *
+   * Déterministe — le tirage vient du moteur, pas de Math.random() — pour que
+   * la même graine reconstruise le même monde.
+   */
+  function poserRation(group, cle, worldX, worldZ) {
+    if (terrainHeight(worldX, worldZ) < -1.2) return null;
+    return spawnResourceMesh(group, cle, "ration", worldX, worldZ);
+  }
+
   // Onde de cristal : un anneau plat qui part du joueur, s'élargit et
   // s'efface. Un seul objet réutilisé, invisible au repos — le joueur doit
   // VOIR la brume être repoussée, pas seulement lire un compteur qui remonte.
@@ -1257,7 +1350,7 @@ export function createFogNomad(ctx) {
     state.inFog = gap <= 0;
 
     if (state.inFog) {
-      state.health -= CONFIG.fog.damagePerSecond * delta;
+      state.health -= CONFIG.fog.damagePerSecond * modeCourant().damage * delta;
 
       if (state.health <= 0) {
         state.health = 0;
@@ -1365,6 +1458,18 @@ export function createFogNomad(ctx) {
   function die(cause) {
     if (state.dead) return;
 
+    // Sursis de mode. NORMAL en accorde zéro : la mort termine la run. Le
+    // point de lecture existe pour que le jour où un mode en accorde un, il
+    // n'y ait rien à réécrire ici.
+    if (state.sursis < modeCourant().viesSupplementaires) {
+      state.sursis++;
+      state.health = CONFIG.player.maxHealth * 0.4;
+      state.fogZ = player.position.z + CONFIG.fog.warnDistance;
+      state.inFog = false;
+      emit();
+      return;
+    }
+
     jouer("mort");
     state.dead = true;
     state.running = false;
@@ -1406,6 +1511,7 @@ export function createFogNomad(ctx) {
       valeur: valueCarried(),
       cristauxUtilises: state.pulses,
       feuxAllumes: state.firesLit,
+      rationsMangees: state.rationsMangees,
       margeMax: Math.round(state.maxFogGap),
       margeMoyenne: state.gapSamples ? Math.round(state.gapSum / state.gapSamples) : null,
       tempsAuDessus200: +state.timeAbove200.toFixed(1),
@@ -1465,6 +1571,9 @@ export function createFogNomad(ctx) {
     lightFire,
     canPulse,
     usePulse,
+    canEat,
+    eatRation,
+    poserRation,
     get fireCount() { return activeFires.size; },
     die,
     weightRatio,

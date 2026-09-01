@@ -1,7 +1,11 @@
 import * as THREE from "./vendor/three/three.module.min.js";
 import { createFogNomad } from "./fognomad.mjs";
-import { bindRunUI, bindPerfOverlay } from "./fognomad-ui.mjs";
+import { bindRunUI, bindPerfOverlay, bindWorldTest } from "./fognomad-ui.mjs";
 import { demarrerAudio, mettreAJourAudio, sons, audioDisponible } from "./audio.mjs";
+import { createWorldDirector, worldContext, WORLD } from "./worlddirector.mjs";
+import { createLiving, LIVING } from "./living.mjs";
+import { modeCourant, GAME_MODES, modesJouables } from "./modes.mjs";
+import { appliquerUI, dispositionCourante, UI_DEFAUT } from "./ui.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -124,6 +128,10 @@ const CHUNK_SIZE = 32;
 const CHUNK_RADIUS = 2;
 const CHUNK_SEGMENTS = 16;
 const PLAYER_SPEED = 6.2;
+
+// Un abri sur trois contient une ration. Assez pour qu'un détour vers une
+// cabane soit un pari raisonnable, trop peu pour qu'on compte dessus.
+const RATION_CHANCE = 0.34;
 const CAMERA_DISTANCE = 13;
 // Plancher de distance caméra : en dessous, le personnage occupe tout l'écran.
 const CAMERA_DISTANCE_MIN = 4.5;
@@ -138,7 +146,8 @@ const SAVE_KEY = "horizon-proto-0.2-save";
 // premiers chunks sont bâtis pendant l'évaluation du module.
 const PARAMS = new URLSearchParams(location.search);
 const DIAG = PARAMS.has("diag");
-const FOGTEST = PARAMS.has("fogtest") || DIAG;
+const WORLDTEST = PARAMS.has("worldtest");
+const FOGTEST = PARAMS.has("fogtest") || DIAG || WORLDTEST;
 
 const diagVisible = {
   terrain: true, troncs: true, houppiers: true, rochers: true,
@@ -1298,31 +1307,32 @@ function buildInstanced(geometry, material, items, applyTransform, colorOf) {
 const LANDMARK_GRID = 6;      // un repère candidat toutes les 6×6 cases de chunk
 const LANDMARK_CHANCE = 0.42; // ... et seulement une case candidate sur deux
 
-function structureAt(cx, cz) {
-  // --- repère lointain ---------------------------------------------------
-  const gx = Math.floor(cx / LANDMARK_GRID);
-  const gz = Math.floor(cz / LANDMARK_GRID);
+// ---------------------------------------------------------------------------
+// Directeur du monde et couche vivante.
+//
+// La décision de ce que porte un chunk n'est plus un tirage nu : elle passe par
+// le WorldDirector, qui regarde le relief, les zones et le voisinage. Cette
+// décision est prise UNE FOIS, à la création du chunk.
+// ---------------------------------------------------------------------------
 
-  if (random01(gx * 313, gz * 571, 401) < LANDMARK_CHANCE) {
-    // La case candidate désigne un chunk précis en son sein : le repère n'est
-    // pas au coin de la grille, sinon l'alignement se verrait.
-    const dx = Math.floor(random01(gx * 17, gz * 29, 403) * LANDMARK_GRID);
-    const dz = Math.floor(random01(gx * 41, gz * 11, 405) * LANDMARK_GRID);
+const worldDirector = createWorldDirector({ get seed() { return worldSeed; } });
 
-    if (cx - gx * LANDMARK_GRID === dx && cz - gz * LANDMARK_GRID === dz) {
-      return random01(gx, gz, 407) < 0.5 ? "monument" : "grandarbre";
-    }
-  }
+const living = createLiving({
+  THREE, scene, player, faceted, mergeGeometries, contaminable
+});
 
-  // --- petite structure ---------------------------------------------------
-  // ~7 % des chunks, soit une trouvaille toutes les quatorze zones environ.
-  const tirage = random01(cx * 89, cz * 127, 409);
-  if (tirage > 0.07) return null;
-
-  const type = random01(cx * 149, cz * 97, 411);
-  if (type < 0.42) return "camp";
-  if (type < 0.78) return "ruine";
-  return "balise";
+/** Dépendances passées au directeur, réévaluées à chaque appel. */
+function depsDirecteur() {
+  return {
+    chunkSize: CHUNK_SIZE,
+    terrainHeight,
+    zoneAt,
+    biomeIndexAt: dominantBiomeIndex,
+    seed: worldSeed,
+    fogGap: game ? game.fogGap : Infinity,
+    distance: game ? game.state.distance : 0,
+    elapsed: game ? game.state.elapsed : 0
+  };
 }
 
 function createChunk(cx, cz) {
@@ -1682,7 +1692,22 @@ function createChunk(cx, cz) {
   }
 
   addFlowers(group, flowers);
-  addStructure(group, cx, cz, centerX, centerZ);
+  // Le directeur décide, le chunk exécute. Un seul appel par chunk créé.
+  const contexte = worldContext(cx, cz, depsDirecteur());
+  const plan = worldDirector.decide(contexte);
+
+  addStructure(group, cx, cz, centerX, centerZ, plan);
+
+  // Une ration se trouve dans un abri, jamais en terrain découvert. C'est ce
+  // qui donne aux structures une raison d'être visitées plutôt que contournées.
+  // Appelé ici et non dans addStructure : les cabanes en sortent tôt, elles
+  // sont bâties par la couche vivante.
+  posePeutEtreUneRation(group, cx, cz, centerX, centerZ, plan);
+
+  living.peupler(group, key, plan, {
+    centerX, centerZ, terrainHeight,
+    hasard: (a, b) => random01(cx * a + b, cz * b - a, 601)
+  });
   game.populateChunk(group, key, cx, cz, centerX, centerZ, random01);
 
   scene.add(group);
@@ -1791,8 +1816,29 @@ function addFlowers(group, flowers) {
  * propre au chunk), donc `disposeChunk` ne doit surtout pas les libérer : elles
  * ne portent pas `ownedGeometry`.
  */
-function addStructure(group, cx, cz, centerX, centerZ) {
-  const type = structureAt(cx, cz);
+/**
+ * Ration éventuelle dans un abri. Camps et cabanes seulement : une ruine est
+ * vidée depuis longtemps, une balise n'a jamais été habitée.
+ *
+ * Le tirage passe par random01(cx, cz, sel) — donc par la graine, comme tout le
+ * reste du monde : deux parties sur la même graine trouvent la ration au même
+ * endroit.
+ */
+function posePeutEtreUneRation(group, cx, cz, centerX, centerZ, plan) {
+  const abri = plan.structure === "cabane" || plan.structure === "camp";
+  if (!abri) return;
+  if (random01(cx * 11, cz * 17, 431) > RATION_CHANCE) return;
+
+  const cle = `${cx},${cz}`;
+  const lx = (random01(cx * 5, cz * 3, 433) - 0.5) * 5;
+  const lz = (random01(cx * 3, cz * 5, 435) - 0.5) * 5;
+  game.poserRation(group, cle, centerX + lx, centerZ + lz);
+}
+
+function addStructure(group, cx, cz, centerX, centerZ, plan) {
+  // Les cabanes sont posées par la couche vivante : elles ont trois états et
+  // leur propre jeu de géométries.
+  const type = plan.landmark || (plan.structure === "cabane" ? null : plan.structure);
   if (!type) return;
 
   // Placement dans le chunk, à l'écart du bord pour que rien ne chevauche la
@@ -1808,12 +1854,18 @@ function addStructure(group, cx, cz, centerX, centerZ) {
 
   const rotation = random01(cx * 31, cz * 37, 417) * Math.PI * 2;
 
+  // Un repère est une structure comme une autre pour le rendu et pour ?diag,
+  // mais il remplit une fonction différente (se situer, pas se réfugier) : on
+  // le marque pour pouvoir les compter séparément dans ?worldtest.
+  const estRepere = !!plan.landmark;
+
   const poser = (geometry, material, echelle = 1, enfonce = 0) => {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(localX, y - enfonce, localZ);
     mesh.rotation.y = rotation;
     mesh.scale.setScalar(echelle);
     mesh.userData.kind = "structures";
+    mesh.userData.repere = estRepere;
     group.add(mesh);
     return mesh;
   };
@@ -1858,8 +1910,12 @@ function addStructure(group, cx, cz, centerX, centerZ) {
   }
 }
 
-function disposeChunk(group) {
+function disposeChunk(group, cle) {
   scene.remove(group);
+
+  // La vie de ce chunk cesse d'exister : sans cela, une longue run finirait
+  // par traîner des milliers d'entités dont plus rien ne s'occupe.
+  if (cle) living.oublierChunk(cle);
 
   group.traverse((object) => {
     // Un cœur de balise cesse d'être animé quand son chunk part : sans cela
@@ -1911,7 +1967,7 @@ function refreshChunks(force = false) {
       Math.abs(chunkX - cx) > CHUNK_RADIUS ||
       Math.abs(chunkZ - cz) > CHUNK_RADIUS
     ) {
-      disposeChunk(group);
+      disposeChunk(group, chunkKey);
       game.onChunkDisposed(chunkKey);
       chunks.delete(chunkKey);
     }
@@ -1943,7 +1999,7 @@ function flushBuildQueue() {
 
 function clearWorld() {
   for (const [key, group] of chunks.entries()) {
-    disposeChunk(group);
+    disposeChunk(group, key);
     game.onChunkDisposed(key);
   }
 
@@ -2497,12 +2553,25 @@ function updateAdaptiveResolution(delta) {
   }
 }
 
+// Liaison de l'interface de run. Renseignée juste avant le premier appel à
+// animate() ; la boucle la teste, car rien ne garantit l'ordre si un jour
+// l'initialisation devient asynchrone.
+let runUI = null;
+
 function animate() {
   requestAnimationFrame(animate);
 
   const now = performance.now();
-  const delta = Math.min((now - lastTime) / 1000, 0.04);
+  const reel = Math.min((now - lastTime) / 1000, 0.04);
   lastTime = now;
+
+  // Temps de simulation. Ouvrir le sac ne met rien en pause : il applique
+  // l'échelle du mode (0,15 en NORMAL). La brume, le joueur et le monde vivant
+  // continuent, quinze fois plus lentement — trier son sac reste un choix qui
+  // coûte du terrain. L'interface, la caméra et la mesure de performance
+  // gardent le temps réel : le HUD doit rester vif même au ralenti.
+  const echelle = runUI ? runUI.echelleTemps() : 1;
+  const delta = reel * echelle;
 
   const keyboard = keyboardMovement();
 
@@ -2546,6 +2615,10 @@ function animate() {
 
   animatePlayer(moving, sprinting, delta);
   game.update(delta, moving, sprinting);
+
+  // Le monde vivant : animaux, oiseaux et nomades. Les comportements ne
+  // tournent pas à 60 Hz — voir living.mjs.
+  living.update(delta, game.state.fogZ, terrainHeight);
 
   // Le son ne lit que des états déjà calculés : il ne décide de rien, et
   // le jeu tourne identiquement s'il est indisponible.
@@ -2593,8 +2666,8 @@ function animate() {
   // par le mur pendant que la caméra rattrape doucement reviendrait au même
   // défaut. On resserre immédiatement, on desserre en douceur.
   const suivi = desiredCamera.z < camera.position.z
-    ? 1 - Math.pow(0.002, delta)          // recul : lissage habituel
-    : 1 - Math.pow(0.0000005, delta);     // resserrement : quasi immédiat
+    ? 1 - Math.pow(0.002, reel)           // recul : lissage habituel
+    : 1 - Math.pow(0.0000005, reel);      // resserrement : quasi immédiat
   camera.position.lerp(desiredCamera, suivi);
 
   camera.lookAt(
@@ -2643,8 +2716,8 @@ function animate() {
     player.position.z + SUN_OFFSET.z
   );
 
-  hudTimer += delta;
-  saveTimer += delta;
+  hudTimer += reel;
+  saveTimer += reel;
 
   if (hudTimer > 0.16) {
     updateHud();
@@ -2656,9 +2729,10 @@ function animate() {
     saveTimer = 0;
   }
 
-  updateAdaptiveResolution(delta);
+  updateAdaptiveResolution(reel);
 
-  if (updatePerf) updatePerf(delta);
+  if (updatePerf) updatePerf(reel);
+  if (updateWorldTest) updateWorldTest(reel);
 
   renderer.render(scene, camera);
 
@@ -2674,8 +2748,13 @@ function animate() {
 // encombre l'écran de jeu et n'apparaît qu'en mode debug.
 if (FOGTEST) document.body.classList.add("dev");
 
+// Disposition du HUD : positions et taille des commandes viennent de ui.mjs,
+// appliquées en variables CSS. Le CSS garde des valeurs de repli, donc l'écran
+// reste jouable même si ce module échouait.
+appliquerUI();
+
 // Interface de run, puis overlay de métriques sous ?fogtest ou ?diag.
-bindRunUI(game);
+runUI = bindRunUI(game);
 
 const updatePerf = FOGTEST
   ? bindPerfOverlay(renderer, () => ({
@@ -2684,6 +2763,41 @@ const updatePerf = FOGTEST
       resources: game.resourceCount
     }))
   : null;
+
+/**
+ * Recense ce que le monde contient réellement autour du joueur.
+ *
+ * Compté par parcours de scène plutôt que tenu à jour dans un compteur : un
+ * compteur mesurerait ce que le code croit avoir posé, un parcours mesure ce
+ * qui est là. La différence entre les deux est précisément le genre de bug
+ * qu'un panneau de contrôle doit révéler.
+ */
+function recenserMonde() {
+  let structures = 0, reperes = 0;
+
+  for (const group of chunks.values()) {
+    group.traverse((o) => {
+      const kind = o.userData?.kind;
+      if (kind === "cabanes") structures++;
+      else if (kind === "structures") {
+        if (o.userData.repere) reperes++; else structures++;
+      }
+    });
+  }
+
+  const vie = living.compte;
+  return {
+    chunks: chunks.size,
+    structures, reperes,
+    nomades: vie.nomades,
+    animaux: vie.animaux,
+    oiseaux: vie.oiseaux,
+    entites: vie.entites,
+    ressources: game.resourceCount
+  };
+}
+
+const updateWorldTest = WORLDTEST ? bindWorldTest(renderer, recenserMonde) : null;
 
 animate();
 
@@ -3057,6 +3171,27 @@ window.HORIZON = {
   setQualite(n) { qualite = Math.max(0, Math.min(QUALITE_NIVEAUX.length - 1, n)); appliquerQualite(); },
   get resourceCount() { return game.resourceCount; },
   get bookkeeping() { return game.bookkeeping; },
+  // --- monde vivant ---
+  get vivant() { return living.compte; },
+  get directeur() { return worldDirector.stats; },
+  resetDirecteur() { worldDirector.reset(); },
+  get worldConfig() { return WORLD; },
+  /**
+   * Décision du directeur pour un chunk, sans le construire.
+   *
+   * Les statistiques sont restaurées après coup : une sonde de test ne doit pas
+   * fausser le compte de ce que le monde a réellement produit.
+   */
+  plan(cx, cz) {
+    const avant = JSON.parse(JSON.stringify(worldDirector.stats));
+    const p = worldDirector.decide(worldContext(cx, cz, depsDirecteur()));
+    Object.assign(worldDirector.stats, avant);
+    return p;
+  },
+  /** Recensement de ce qui est réellement en scène (voir ?worldtest). */
+  get monde() { return recenserMonde(); },
+  get mode() { return modeCourant(); },
+  get game() { return game; },
   get bagTier() { return game.bagTier(); },
   get speedFactor() { return game.speedFactor(); },
   get canSprint() { return game.canSprint(); },

@@ -121,7 +121,7 @@ console.log("\n=== PRESSION TEMPORELLE (phase 4) ===");
 const courbe = await H(async () => {
   const { fogSpeedAt } = await import("/fognomad.mjs");
   const pts = {};
-  for (const t of [0, 60, 120, 240, 360, 480, 600, 900, 1800, 3600]) {
+  for (const t of [0, 40, 60, 120, 240, 360, 480, 600, 900, 1800, 3600]) {
     pts[t] = +fogSpeedAt(t).toFixed(3);
   }
   return pts;
@@ -136,14 +136,40 @@ ok("brume: la vitesse ne décroît jamais",
    valeurs.every((v, i) => i === 0 || v >= valeurs[i - 1]));
 ok("brume: permissive au démarrage", courbe[0] === cfg.speed, `${courbe[0]} u/s`);
 ok("brume: aucune montée pendant le délai de grâce",
-   courbe[60] === courbe[0], `${courbe[0]} -> ${courbe[60]}`);
-ok("brume: plafonnée", courbe[3600] === cfg.speedMax, `${courbe[3600]} = ${cfg.speedMax}`);
-ok("brume: le plafond dépasse la marche à vide",
-   cfg.speedMax > moteur.playerSpeed,
-   `${cfg.speedMax} > ${moteur.playerSpeed} — sinon un joueur qui ne ramasse rien n'est jamais rattrapé`);
-ok("brume: le plafond reste sous le sprint",
-   cfg.speedMax < moteur.playerSpeed * moteur.runMultiplier,
-   `${cfg.speedMax} < ${(moteur.playerSpeed * moteur.runMultiplier).toFixed(2)}`);
+   courbe[40] === courbe[0], `${courbe[0]} -> ${courbe[40]} à 40 s (délai ${cfg.pressureDelay} s)`);
+
+// 0.5 : la pression ne plafonne plus.
+//
+// En 0.4 la courbe atteignait speed + speedGain et n'y touchait plus. Les runs
+// réelles montraient ce que cela produit : une fois l'avance prise, elle ne se
+// perdait plus (595 unités mesurées sur une run de 12 min). Un palier plat est
+// un régime stable, et un régime stable est une partie qui ne se termine que
+// par lassitude. La dérive lente de la seconde phase l'interdit — sans
+// rubber-banding : elle ne dépend QUE du temps écoulé, jamais de l'avance du
+// joueur (vérifié plus bas).
+ok("brume: la pression continue de monter au-delà de la rampe",
+   courbe[1800] > courbe[600] && courbe[3600] > courbe[1800],
+   `10min ${courbe[600]} -> 30min ${courbe[1800]} -> 60min ${courbe[3600]}`);
+// La dérive doit être lente au point d'être insensible dans l'instant : c'est
+// ce qui la distingue d'une accélération punitive.
+ok("brume: la dérive reste imperceptible à l'échelle de la minute",
+   (courbe[1800] - courbe[900]) / 15 < 0.1,
+   `${((courbe[1800] - courbe[900]) / 15).toFixed(4)} u/s par minute entre 15 et 30 min`);
+
+const sprint = moteur.playerSpeed * moteur.runMultiplier;
+ok("brume: la brume dépasse la marche à vide dès la rampe",
+   courbe[600] > moteur.playerSpeed,
+   `${courbe[600]} > ${moteur.playerSpeed} — sinon un joueur qui ne ramasse rien n'est jamais rattrapé`);
+// La course reste une échappatoire sur toute run plausible. La plus longue run
+// réelle mesurée fait 12 min 47 ; à 30 min la brume est encore sous le sprint.
+ok("brume: le sprint reste une échappatoire sur une run plausible",
+   courbe[1800] < sprint,
+   `à 30 min : ${courbe[1800]} < ${sprint.toFixed(2)}`);
+// speedMax est un garde-fou numérique, pas un plafond de conception : il faut
+// deux heures de run pour l'atteindre.
+ok("brume: le garde-fou numérique est hors de portée d'une run",
+   cfg.speedMax > courbe[3600],
+   `${cfg.speedMax} jamais atteint en une heure (${courbe[3600]})`);
 
 // La pression ne doit dépendre QUE du temps. On le vérifie en déplaçant le
 // joueur de façon extrême entre deux lectures au même instant de run.

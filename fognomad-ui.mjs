@@ -6,6 +6,7 @@
  */
 
 import { CONFIG } from "./fognomad.mjs";
+import { modeCourant } from "./modes.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -21,6 +22,11 @@ export function bindRunUI(game) {
   const collectRing = $("#collect-ring");
   const collectFill = collectRing.querySelector("i");
   const bagList = $("#bag-list");
+  const openBag = $("#open-bag");
+  const bagPanel = $("#bag-panel");
+  const bagItems = $("#bag-items");
+  const bagWeight = $("#bag-weight");
+  const closeBag = $("#close-bag");
   const vignette = $("#fog-vignette");
   const death = $("#death");
   const deathCause = $("#death-cause");
@@ -34,7 +40,42 @@ export function bindRunUI(game) {
   // Le contenu du sac ne change qu'aux collectes et aux abandons : on ne
   // reconstruit la liste que lorsqu'elle diffère réellement.
   let lastBagSignature = "";
+  let lastPanelSignature = "";
   let lastCollected = 0;
+
+  // Le sac ouvert ne met pas le jeu en pause : il ralentit le temps. La brume
+  // continue d'avancer, très lentement — assez pour que trier son sac reste
+  // une décision et non un temps mort gratuit.
+  let sacOuvert = false;
+
+  function ouvrirSac() {
+    sacOuvert = true;
+    bagPanel.hidden = false;
+    openBag.hidden = true;
+    lastPanelSignature = "";
+    renderPanel(game.state);
+  }
+
+  function fermerSac() {
+    sacOuvert = false;
+    bagPanel.hidden = true;
+    openBag.hidden = false;
+  }
+
+  openBag.addEventListener("click", (event) => {
+    event.preventDefault();
+    ouvrirSac();
+  });
+
+  closeBag.addEventListener("click", (event) => {
+    event.preventDefault();
+    fermerSac();
+  });
+
+  // Échap ferme le sac au clavier — utile en test, sans effet sur mobile.
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && sacOuvert) fermerSac();
+  });
 
   restartButton.addEventListener("click", () => {
     game.restart();
@@ -98,6 +139,70 @@ export function bindRunUI(game) {
       kg.className = "kg";
       kg.textContent = `${spec.weight * count}`;
 
+      chip.append(swatch, label, kg);
+      bagList.appendChild(chip);
+    }
+  }
+
+  /**
+   * Contenu du menu de sac. Reconstruit seulement quand l'inventaire change :
+   * ouvert, il est rendu à chaque image comme le reste du HUD.
+   */
+  function renderPanel(state) {
+    bagWeight.textContent = `${Math.round(state.weight)} / ${CONFIG.weight.max}`;
+
+    // La signature inclut la possibilité de manger : à pleine santé le bouton
+    // est désactivé, et il doit se réactiver dès qu'on prend le moindre dégât.
+    const signature = Object.entries(state.inventory)
+      .map(([key, count]) => `${key}:${count}`)
+      .join("|") + `|manger:${game.canEat()}`;
+    if (signature === lastPanelSignature) return;
+    lastPanelSignature = signature;
+
+    bagItems.replaceChildren();
+    let lignes = 0;
+
+    for (const key of Object.keys(CONFIG.resources)) {
+      const count = state.inventory[key] || 0;
+      if (!count) continue;
+      lignes++;
+
+      const spec = CONFIG.resources[key];
+      const ligne = document.createElement("div");
+      ligne.className = "ligne";
+
+      const swatch = document.createElement("span");
+      swatch.className = "swatch";
+      swatch.style.background = "#" + spec.color.toString(16).padStart(6, "0");
+
+      const label = document.createElement("span");
+      label.textContent = `${spec.label} ×${count}`;
+
+      const kg = document.createElement("span");
+      kg.className = "kg";
+      kg.textContent = `${spec.weight * count} kg`;
+
+      ligne.append(swatch, label, kg);
+
+      // La ration se mange depuis le sac : c'est le seul objet du jeu qui
+      // s'utilise plutôt que de se transporter ou de se jeter.
+      if (spec.soin) {
+        const manger = document.createElement("button");
+        manger.type = "button";
+        manger.className = "manger";
+        manger.textContent = "Manger";
+        manger.disabled = !game.canEat();
+        manger.setAttribute("aria-label", "Manger une ration");
+        manger.addEventListener("click", (event) => {
+          event.preventDefault();
+          if (!game.eatRation()) return;
+          lastPanelSignature = "";
+          renderPanel(game.state);
+          render(game.state);
+        });
+        ligne.appendChild(manger);
+      }
+
       const drop = document.createElement("button");
       drop.type = "button";
       drop.textContent = "×";
@@ -105,11 +210,20 @@ export function bindRunUI(game) {
       drop.addEventListener("click", (event) => {
         event.preventDefault();
         game.dropOne(key);
+        lastPanelSignature = "";
+        renderPanel(game.state);
         render(game.state);
       });
 
-      chip.append(swatch, label, kg, drop);
-      bagList.appendChild(chip);
+      ligne.appendChild(drop);
+      bagItems.appendChild(ligne);
+    }
+
+    if (!lignes) {
+      const vide = document.createElement("p");
+      vide.className = "vide";
+      vide.textContent = "Sac vide.";
+      bagItems.appendChild(vide);
     }
   }
 
@@ -131,6 +245,7 @@ export function bindRunUI(game) {
       ["Objets jetés", String(state.dropped)],
       ["Cristaux utilisés", String(state.pulses)],
       ["Feux allumés", String(state.firesLit)],
+      ["Rations mangées", String(state.rationsMangees)],
       ["Avance maximale", `${Math.round(state.maxFogGap)} m`]
     ];
 
@@ -186,13 +301,26 @@ export function bindRunUI(game) {
     }
 
     renderBag(state);
+    if (sacOuvert) renderPanel(state);
+
+    // La mort ferme le sac : le panneau resterait par-dessus l'écran de fin.
+    if (state.dead && sacOuvert) fermerSac();
+
     renderDeath(state);
   }
 
   game.onChange(render);
   render(game.state);
 
-  return { render };
+  /**
+   * Échelle de temps demandée par l'interface. La boucle de jeu la lit à
+   * chaque image ; elle ne connaît pas le sac, seulement ce nombre.
+   */
+  function echelleTemps() {
+    return sacOuvert ? modeCourant().bagTimeScale : 1;
+  }
+
+  return { render, echelleTemps, get sacOuvert() { return sacOuvert; } };
 }
 
 /**
@@ -229,5 +357,56 @@ export function bindPerfOverlay(renderer, readState) {
     frames = 0;
     elapsed = 0;
     worstFrame = 0;
+  };
+}
+
+/**
+ * Overlay ?worldtest — contrôle du monde vivant.
+ *
+ * Le panneau ?fogtest mesure le coût de rendu ; celui-ci mesure ce que le
+ * WorldDirector a réellement produit autour du joueur. Les deux répondent à des
+ * questions différentes : « est-ce que ça tient 45 images par seconde » et
+ * « est-ce que le monde est peuplé de ce qu'on croit ».
+ *
+ * Il est relevé deux fois par seconde, pas à chaque image : le parcours de
+ * scène qu'il demande coûterait plus cher que ce qu'il mesure.
+ */
+export function bindWorldTest(renderer, lireMonde) {
+  const panel = document.createElement("div");
+  panel.id = "worldtest";
+  document.body.appendChild(panel);
+
+  let frames = 0;
+  let cumul = 0;
+  let pire = 0;
+
+  return function updateWorldTest(delta) {
+    frames++;
+    cumul += delta;
+    pire = Math.max(pire, delta);
+
+    if (cumul < 0.5) return;
+
+    const fps = frames / cumul;
+    const info = renderer.info;
+    const m = lireMonde();
+
+    // Chrome expose le tas JS ; ailleurs la ligne est simplement absente
+    // plutôt que remplie d'un zéro trompeur.
+    const tas = performance.memory
+      ? `${(performance.memory.usedJSHeapSize / 1048576).toFixed(1)} Mo JS`
+      : "tas non mesurable";
+
+    panel.textContent =
+      `${fps.toFixed(0)} fps   pire ${(pire * 1000).toFixed(0)} ms\n` +
+      `${info.render.calls} calls   ${info.render.triangles} tris   ` +
+      `${info.memory.geometries} géo   ${tas}\n` +
+      `${m.chunks} chunks   ${m.structures} structures   ${m.reperes} repères\n` +
+      `${m.nomades} nomades   ${m.animaux} animaux   ${m.oiseaux} oiseaux\n` +
+      `${m.entites} entités vivantes   ${m.ressources} ressources`;
+
+    frames = 0;
+    cumul = 0;
+    pire = 0;
   };
 }
