@@ -132,6 +132,10 @@
   <script type="module">
     const p = new URLSearchParams(location.search);
     const banc = p.has("arttest") || p.has("animtest");
+    // La classe est posée AVANT le chargement du module : sans elle, l'écran
+    // de chargement du jeu (z-index 20) recouvre le banc, qui tourne alors
+    // invisible — observé sur l'appareil, et corrigé ici.
+    if (banc) document.body.classList.add("banc");
     import(banc ? "./arttest.mjs" : "./main.mjs");
   </script>
 
@@ -159,7 +163,12 @@
       }, true);
 
       setTimeout(function () {
-        if (!window.HORIZON) {
+        // Le banc d'essai ne définit pas HORIZON — il ne construit pas le
+        // monde. Le filet doit surveiller la sonde correspondant au module
+        // réellement chargé, sinon il annonce une panne WebGL sur une page
+        // qui rend parfaitement.
+        var banc = document.body.classList.contains("banc");
+        if (banc ? !window.ARTTEST : !window.HORIZON) {
           fail("Démarrage impossible : WebGL est peut-être désactivé.");
         }
       }, 12000);

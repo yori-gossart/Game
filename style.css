@@ -952,3 +952,9 @@ body.gaucher #open-bag {
   border-color: #ffd27f;
   color: #16191f;
 }
+
+/* En mode banc d'essai, tout le DOM du jeu disparaît — écran de chargement
+   compris. Le banc pose son propre canvas et son propre HUD directement sur
+   le body ; laisser #game en place mettait un dégradé opaque par-dessus. */
+body.banc #game { display: none !important; }
+body.banc { background: #6b7480; }

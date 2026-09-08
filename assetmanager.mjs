@@ -49,12 +49,23 @@ export const CATALOGUE = {
   // la morphologie et la tenue, pas dans le style. Voir ART_DIRECTION_0.6.md.
   nomade_capuche: { url: "assets/characters/nomade_capuche.glb", type: "personnage" },
   nomade_robuste: { url: "assets/characters/nomade_robuste.glb", type: "personnage" },
-  nomade_long:    { url: "assets/characters/nomade_long.glb",    type: "personnage" },
+  // Le chapeau pointu monte la silhouette à 3,00 unités contre 2,25 à 2,47
+  // pour les trois autres — hors de la fourchette de ART_DIRECTION_0.6.md, et
+  // relevé par ?arttest avant d'être vu à l'œil. Il lit « magicien » là où le
+  // jeu ne parle que de voyageurs : le retirer corrige l'échelle ET le propos.
+  nomade_long:    { url: "assets/characters/nomade_long.glb",    type: "personnage",
+                    exclure: /hat|spellbook/i },
   nomade_charge:  { url: "assets/characters/nomade_charge.glb",  type: "personnage" },
 };
 
-/** Objets à retirer de tout personnage : armes et projectiles. */
+/** Objets à retirer de TOUT personnage : armes et projectiles. */
 const ARMES = /crossbow|knife|throwable|sword|axe|shield|staff|wand|bow|arrow|dagger|spear|hammer/i;
+
+/** Un objet est-il à retirer de ce modèle-ci ? Armes partout, plus le filtre
+    propre à l'entrée du catalogue quand elle en déclare un. */
+function aRetirer(nom, entree) {
+  return ARMES.test(nom) || (entree.exclure ? entree.exclure.test(nom) : false);
+}
 
 /**
  * Correspondance entre les états du jeu et les clips du pack.
@@ -114,7 +125,7 @@ export function createAssetManager({ onLog = () => {} } = {}) {
         // Le pack livre les armes montées sur le squelette. On les retire ici,
         // donc une seule fois, plutôt qu'à chaque nomade posé dans le monde.
         const retires = [];
-        scene.traverse((o) => { if (o.isMesh && ARMES.test(o.name)) retires.push(o); });
+        scene.traverse((o) => { if (o.isMesh && aRetirer(o.name, entree)) retires.push(o); });
         for (const o of retires) o.removeFromParent();
 
         let tris = 0, parties = 0;
@@ -149,13 +160,13 @@ export function createAssetManager({ onLog = () => {} } = {}) {
           scene, animations: gltf.animations || [],
           tris: Math.round(tris), parties,
           type: entree.type, url: entree.url,
-          armesRetirees: retires.length,
+          retires: retires.map((o) => o.name),
         };
         cache.set(cle, paquet);
         etat.telechargements++;
         onLog(`Asset « ${cle} » chargé — ${Math.round(tris)} tris, ${parties} partie(s), `
           + `${paquet.animations.length} clip(s), ${Math.round(performance.now() - t0)} ms`
-          + (retires.length ? `, ${retires.length} arme(s) retirée(s).` : "."));
+          + (retires.length ? `, ${retires.length} objet(s) retiré(s).` : "."));
         return paquet;
       } catch (e) {
         const message = e?.message || String(e);
