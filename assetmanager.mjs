@@ -58,6 +58,15 @@ export const CATALOGUE = {
   nomade_charge:  { url: "assets/characters/nomade_charge.glb",  type: "personnage" },
 };
 
+/* Le décor déclare ses propres entrées dans decors.mjs et les enregistre ici :
+   le catalogue reste le seul endroit qui connaisse une URL, mais la liste des
+   modèles de décor vit à côté du code qui les pose. */
+export function enregistrerAuCatalogue(entrees) {
+  for (const [cle, def] of Object.entries(entrees)) {
+    if (!CATALOGUE[cle]) CATALOGUE[cle] = { url: def.url, type: def.type || "decor" };
+  }
+}
+
 /**
  * Objets à retirer de TOUT personnage.
  *

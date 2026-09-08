@@ -8,6 +8,7 @@ import { modeCourant, GAME_MODES, modesJouables } from "./modes.mjs";
 import { appliquerUI, dispositionCourante, UI_DEFAUT } from "./ui.mjs";
 import { createAssetManager } from "./assetmanager.mjs";
 import { habillerJoueur } from "./joueur.mjs";
+import { createDecors, FAMILLES_ARBRES } from "./decors.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -410,6 +411,25 @@ function contaminable(material) {
   material.customProgramCacheKey = () => "contam";
   return material;
 }
+
+/* ---------------------------------------------------------------------------
+   ASSETS ET DÉCOR (0.6)
+
+   Déclarés ICI, et pas plus bas, parce que `createChunk` consulte `decors` et
+   que les premiers chunks sont bâtis pendant l'évaluation du module. Le même
+   piège avait déjà obligé à remonter `DIAG` et les niveaux de qualité.
+--------------------------------------------------------------------------- */
+
+/** Journal des assets. Conservé en mémoire pour la sonde, et visible en
+    console : un asset qui manque doit se lire, pas se deviner. */
+const journalAssets = [];
+function noterAsset(message) {
+  journalAssets.push(message);
+  if (FOGTEST) console.log("[assets]", message);
+}
+
+const assets = createAssetManager({ onLog: noterAsset });
+const decors = createDecors({ THREE, assets, contaminable, log: noterAsset });
 
 // Un seul matériau de terrain : la couleur de biome passe par les couleurs de
 // sommets, ce qui fond les biomes entre eux au lieu de les découper au chunk.
@@ -1337,6 +1357,49 @@ function depsDirecteur() {
   };
 }
 
+/**
+ * Choisit un modèle d'arbre pour chaque emplacement déjà décidé par le moteur.
+ *
+ * Le placement ne change PAS : on reprend exactement les listes que la 0.5
+ * produisait — mêmes positions, mêmes échelles, mêmes rotations. Seule la
+ * silhouette posée à chaque emplacement change. C'est ce qui garantit qu'un
+ * monde généré sur une graine donnée reste le même monde.
+ *
+ * La famille suit le contexte : haute altitude et roche appellent des
+ * conifères, une clairière humide des feuillus, et le bois mort se répartit
+ * partout — c'est lui qui raconte que le monde meurt.
+ */
+function arbresDuChunk(cx, cz, hauts, larges, morts) {
+  const items = [];
+
+  const choisir = (famille, i) => {
+    const liste = FAMILLES_ARBRES[famille];
+    return liste[Math.floor(random01(cx * 17 + i, cz * 23 - i, 811) * liste.length) % liste.length];
+  };
+
+  // Conifères hauts : la masse verticale du paysage.
+  hauts.forEach((it, i) => {
+    items.push({ cle: choisir("conifere_haut", i), x: it.x, y: it.y, z: it.z,
+                 rotation: it.rotation, scale: it.scale * 0.78 });
+  });
+
+  // Conifères larges : remplacés par un mélange conifère dense / feuillu, pour
+  // que deux arbres voisins ne soient plus le même cône à deux échelles.
+  larges.forEach((it, i) => {
+    const feuillu = random01(cx * 31 + i, cz * 13 + i, 813) < 0.45;
+    items.push({ cle: choisir(feuillu ? "feuillu" : "conifere_dense", i),
+                 x: it.x, y: it.y, z: it.z,
+                 rotation: it.rotation, scale: it.scale * 0.78 });
+  });
+
+  morts.forEach((it, i) => {
+    items.push({ cle: choisir("mort", i), x: it.x, y: it.y, z: it.z,
+                 rotation: it.rotation, scale: (it.scale || 1) * 0.5 });
+  });
+
+  return items;
+}
+
 function createChunk(cx, cz) {
   const key = `${cx},${cz}`;
   if (chunks.has(key)) return;
@@ -1676,21 +1739,52 @@ function createChunk(cx, cz) {
     }
   );
 
-  const familles = [
-    [trunkMesh, "troncs"],
-    [coniferTallMesh, "houppiers"],
-    [coniferBroadMesh, "houppiers"],
-    [deadMesh, "boismort"],
-    [bushMesh, "arbustes"],
-    [grassMesh, "herbes"],
-    [rockMesh, "rochers"],
-    [boulderMesh, "rochers"]
-  ];
+  // --- arbres : modèles réels quand ils sont chargés, procédural sinon ----
+  //
+  // Le basculement est total, pas partiel : mélanger des conifères procéduraux
+  // et des modèles importés dans un même chunk donnerait deux styles côte à
+  // côte, ce que ART_DIRECTION_0.6.md interdit explicitement.
+  const arbresReels = decors.pret
+    ? decors.fusionner(arbresDuChunk(cx, cz, coniferesHauts, coniferesLarges, arbresMorts))
+    : [];
+
+  const familles = arbresReels.length
+    ? [
+        // Les troncs procéduraux disparaissent avec les houppiers : les
+        // modèles importés portent leur propre tronc.
+        [bushMesh, "arbustes"],
+        [grassMesh, "herbes"],
+        [rockMesh, "rochers"],
+        [boulderMesh, "rochers"],
+      ]
+    : [
+        [trunkMesh, "troncs"],
+        [coniferTallMesh, "houppiers"],
+        [coniferBroadMesh, "houppiers"],
+        [deadMesh, "boismort"],
+        [bushMesh, "arbustes"],
+        [grassMesh, "herbes"],
+        [rockMesh, "rochers"],
+        [boulderMesh, "rochers"],
+      ];
+
+  for (const mesh of arbresReels) {
+    mesh.userData.kind = "houppiers";   // même interrupteur ?diag qu'avant
+    group.add(mesh);
+  }
 
   for (const [mesh, kind] of familles) {
     if (!mesh) continue;
     mesh.userData.kind = kind;
     group.add(mesh);
+  }
+
+  // Les maillages procéduraux non utilisés sont libérés tout de suite : les
+  // garder en mémoire pour rien serait une fuite proportionnelle aux chunks.
+  if (arbresReels.length) {
+    for (const m of [trunkMesh, coniferTallMesh, coniferBroadMesh, deadMesh]) {
+      if (m?.userData?.ownedGeometry) m.geometry.dispose();
+    }
   }
 
   addFlowers(group, flowers);
@@ -2576,19 +2670,27 @@ let runUI = null;
 --------------------------------------------------------------------------- */
 let joueurRigge = null;
 
-/** Journal des assets. Conservé en mémoire pour la sonde, et visible en
-    console : un asset qui manque doit se lire, pas se deviner. */
-const journalAssets = [];
-function noterAsset(message) {
-  journalAssets.push(message);
-  if (FOGTEST) console.log("[assets]", message);
-}
-
-const assets = createAssetManager({ onLog: noterAsset });
-
+// Le gestionnaire d'assets et le décor sont créés bien plus haut : les
+// premiers chunks se bâtissent pendant l'évaluation du module, et createChunk
+// consulte `decors`. L'habillage du joueur, lui, se déclenche ici.
 habillerJoueur({ player, assets, log: noterAsset })
   .then((r) => { joueurRigge = r; })
   .catch((e) => noterAsset(`Joueur : habillage impossible (${e.message}) — mannequin conservé.`));
+
+/* Décor : les 25 premiers chunks se sont bâtis en procédural, faute de modèles
+   chargés à ce moment-là. Une fois les fichiers arrivés, on les rebâtit — c'est
+   la seule façon d'éviter une bordure où la végétation change de style au
+   milieu du monde. Le rebâtissage est GRATUIT en information : même graine,
+   mêmes positions, seules les silhouettes changent. */
+decors.precharger()
+  .then((pret) => {
+    if (!pret) return;
+    clearWorld();
+    refreshChunks(true);
+    noterAsset(`Décor appliqué — monde rebâti, ${decors.patrons.length} modèle(s), `
+      + `atlas ${decors.atlas.join(" + ")}.`);
+  })
+  .catch((e) => noterAsset(`Décor indisponible (${e.message}) — végétation procédurale conservée.`));
 
 function animate() {
   requestAnimationFrame(animate);
