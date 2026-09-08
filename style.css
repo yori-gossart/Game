@@ -901,3 +901,54 @@ body.gaucher #open-bag {
   pointer-events: none;
   z-index: 9;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   BANC D'ESSAI ARTISTIQUE (?arttest / ?animtest)
+   Volontairement à part du HUD de jeu : ce n'est pas une interface de
+   joueur, et la faire ressembler à celle du jeu inviterait à la confondre.
+   ───────────────────────────────────────────────────────────────────────── */
+#arttest-hud {
+  position: fixed;
+  top: max(8px, env(safe-area-inset-top));
+  left: 8px;
+  max-width: min(70vw, 380px);
+  max-height: 34vh;
+  overflow: hidden;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: rgba(10, 12, 16, .74);
+  color: #eef2f7;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  pointer-events: none;
+  z-index: 10;
+}
+#arttest-hud.ouvert { max-height: 78vh; overflow-y: auto; pointer-events: auto; }
+#arttest-hud b { color: #ffd27f; }
+
+#arttest-barre {
+  position: fixed;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  z-index: 11;
+}
+#arttest-barre button {
+  min-height: 44px;              /* cible tactile : on teste sur téléphone */
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 10px;
+  background: rgba(18, 21, 27, .82);
+  color: #eef2f7;
+  font: 600 13px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+#arttest-barre button.actif {
+  background: #ffd27f;
+  border-color: #ffd27f;
+  color: #16191f;
+}

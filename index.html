@@ -113,7 +113,27 @@
     </div>
   </main>
 
-  <script type="module" src="./main.mjs"></script>
+  <!-- Résolution des modules three.js.
+       GLTFLoader et SkeletonUtils sont vendorisés TELS QUELS depuis l'amont
+       r185 : ils importent « three » en spécificateur nu. Une importmap les
+       laisse byte-identiques à l'original, ce qui garde la provenance
+       vérifiable — plutôt que de patcher leurs imports à la main. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/three.module.min.js",
+      "three/addons/": "./vendor/three/jsm/"
+    }
+  }
+  </script>
+  <!-- Les bancs d'essai (?arttest, ?animtest) remplacent le jeu au lieu de s'y
+       ajouter : ils n'ont pas besoin du monde, et le construire pour rien
+       coûterait plusieurs secondes avant la première image. -->
+  <script type="module">
+    const p = new URLSearchParams(location.search);
+    const banc = p.has("arttest") || p.has("animtest");
+    import(banc ? "./arttest.mjs" : "./main.mjs");
+  </script>
 
   <script>
     // Filet de sécurité : si le module ne démarre pas (WebGL indisponible,
