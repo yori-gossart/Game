@@ -302,7 +302,16 @@ console.log(`   FPS ${perf.fps.toFixed(1)} | p95 ${perf.p95.toFixed(1)}ms | max 
 console.log(`   ${perf.info.calls} calls | ${perf.info.triangles ?? perf.info.tris} tris | `
   + `${perf.info.geometries} géo | ${perf.info.textures} tex | ${perf.chunks} chunks | `
   + `${perf.objets} objets | ${perf.res} ressources`);
-ok("perf: aucune texture", perf.info.textures === 0);
+// La 0.5 ne chargeait aucune texture, et cette assertion valait « zéro ».
+// La 0.6 en charge délibérément : les modèles des packs sont peints sur un
+// atlas de gradient partagé. L'invariant utile n'est plus l'absence, c'est la
+// règle de ART_DIRECTION_0.6.md — peu d'atlas, aucun grand format, pas de 4K.
+{
+  const tex = await p.evaluate(() => window.HORIZON.textures);
+  console.log(`   textures : ${tex.distinctes} distincte(s), plus grande ${tex.plusGrande} px`);
+  ok("perf: peu d'atlas de texture", tex.distinctes <= 4, `${tex.distinctes} distincte(s)`);
+  ok("perf: aucune texture de grand format", tex.plusGrande <= 1024, `${tex.plusGrande} px`);
+}
 ok("perf: chunks bornés en course", perf.chunks === 25);
 
 const real = errors.filter(e => !e.includes("favicon"));

@@ -32,7 +32,15 @@ ok("A: 25 chunks au démarrage", A.chunks === 25, `${A.chunks}`);
 ok("A: joueur posé sur le sol", Math.abs(A.pos.y) < 12, `y=${A.pos.y.toFixed(2)}`);
 ok("A: HUD renseigné", /Seed \d+/.test(A.hudSeed), A.hudSeed);
 ok("A: première image rendue", A.ready);
-ok("A: aucune texture", A.info.textures === 0, `${A.info.textures}`);
+// La 0.5 ne chargeait aucune texture, et cette assertion valait « zéro ».
+// La 0.6 en charge délibérément : les modèles des packs sont peints sur un
+// atlas de gradient partagé. L'invariant utile n'est plus l'absence, c'est la
+// règle de ART_DIRECTION_0.6.md — peu d'atlas, aucun grand format, pas de 4K.
+{
+  const tex = await p.evaluate(() => window.HORIZON.textures);
+  ok("A: peu d'atlas de texture", tex.distinctes <= 4, `${tex.distinctes} distincte(s)`);
+  ok("A: aucune texture de grand format", tex.plusGrande <= 1024, `${tex.plusGrande} px`);
+}
 
 console.log("\n=== PHASE 5 — Mathématique des chunks / quadrants ===");
 const chunkMath = await p.evaluate(() => {

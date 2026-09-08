@@ -384,7 +384,15 @@ console.log("\n=== INTÉGRITÉ ===");
 const nonFinis = await H(() => window.HORIZON.scanNonFinite());
 ok("intégrité: aucune valeur non finie en scène", nonFinis.length === 0,
    nonFinis.length ? JSON.stringify(nonFinis[0]) : "propre");
-ok("intégrité: aucune texture chargée", (await H(() => window.HORIZON.info.textures)) === 0);
+// La 0.5 ne chargeait aucune texture, et cette assertion valait « zéro ».
+// La 0.6 en charge délibérément : les modèles des packs sont peints sur un
+// atlas de gradient partagé. L'invariant utile n'est plus l'absence, c'est la
+// règle de ART_DIRECTION_0.6.md — peu d'atlas, aucun grand format, pas de 4K.
+{
+  const tex = await H(() => window.HORIZON.textures);
+  ok("intégrité: peu d'atlas de texture", tex.distinctes <= 4, `${tex.distinctes} distincte(s)`);
+  ok("intégrité: aucune texture de grand format", tex.plusGrande <= 1024, `${tex.plusGrande} px`);
+}
 ok("runtime: aucune erreur console", errors.length === 0,
    errors.length ? errors.slice(0, 2).join(" | ") : "propre");
 

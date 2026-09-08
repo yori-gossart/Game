@@ -6,6 +6,8 @@ import { createWorldDirector, worldContext, WORLD } from "./worlddirector.mjs";
 import { createLiving, LIVING } from "./living.mjs";
 import { modeCourant, GAME_MODES, modesJouables } from "./modes.mjs";
 import { appliquerUI, dispositionCourante, UI_DEFAUT } from "./ui.mjs";
+import { createAssetManager } from "./assetmanager.mjs";
+import { habillerJoueur } from "./joueur.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -2301,6 +2303,11 @@ function keyboardMovement() {
 }
 
 function animatePlayer(moving, sprinting, delta) {
+  // Le personnage riggé porte ses propres animations : faire tourner en plus
+  // la cinématique du mannequin ferait travailler des objets invisibles, et
+  // pire, laisserait deux sources de vérité pour la démarche.
+  if (joueurRigge) return;
+
   const u = player.userData;
   const { body, basque, head, hairCap, foulard, panFoulard, cou,
           leftLeg, rightLeg, leftBoot, rightBoot, leftArm, rightArm, shoulders } = u;
@@ -2558,6 +2565,31 @@ function updateAdaptiveResolution(delta) {
 // l'initialisation devient asynchrone.
 let runUI = null;
 
+/* ---------------------------------------------------------------------------
+   Personnage riggé (0.6)
+
+   L'habillage est ASYNCHRONE et la boucle démarre sans l'attendre : un asset
+   de plusieurs mégaoctets ne doit pas retarder la première image. Tant que
+   `joueurRigge` vaut null, le mannequin procédural joue, exactement comme en
+   0.5. Quand le glTF arrive, il prend la main. Si jamais il n'arrive pas, le
+   jeu reste jouable — c'est la règle 2 de assetmanager.mjs.
+--------------------------------------------------------------------------- */
+let joueurRigge = null;
+
+/** Journal des assets. Conservé en mémoire pour la sonde, et visible en
+    console : un asset qui manque doit se lire, pas se deviner. */
+const journalAssets = [];
+function noterAsset(message) {
+  journalAssets.push(message);
+  if (FOGTEST) console.log("[assets]", message);
+}
+
+const assets = createAssetManager({ onLog: noterAsset });
+
+habillerJoueur({ player, assets, log: noterAsset })
+  .then((r) => { joueurRigge = r; })
+  .catch((e) => noterAsset(`Joueur : habillage impossible (${e.message}) — mannequin conservé.`));
+
 function animate() {
   requestAnimationFrame(animate);
 
@@ -2614,6 +2646,18 @@ function animate() {
   player.position.y = Math.max(ground, -2.45);
 
   animatePlayer(moving, sprinting, delta);
+
+  // Le personnage riggé reçoit la vitesse RÉELLE, pas seulement l'état :
+  // c'est ce qui cale la cadence du pas sur le déplacement et empêche les
+  // pieds de glisser quand la charge ralentit le joueur.
+  if (joueurRigge) {
+    joueurRigge.mettreAJour(delta, {
+      avance: moving,
+      sprint: sprinting,
+      vitesse: PLAYER_SPEED * (sprinting ? RUN_MULTIPLIER : 1) * game.speedFactor(),
+    });
+  }
+
   game.update(delta, moving, sprinting);
 
   // Le monde vivant : animaux, oiseaux et nomades. Les comportements ne
@@ -3195,6 +3239,57 @@ window.HORIZON = {
   // l'écraser cassait silencieusement quatre tests qui le lisaient. L'API
   // complète est exposée sous un autre nom.
   get jeu() { return game; },
+  /** Sonde du personnage riggé (0.6). null tant que l'asset n'est pas arrivé. */
+  get joueur() {
+    if (!joueurRigge) return { rigge: false, raison: assets.erreur("nomade_capuche") };
+    let skinnes = 0, transparents = [];
+    joueurRigge.corps.traverse((o) => {
+      if (o.isSkinnedMesh) skinnes++;
+      if (o.isMesh && (o.material?.transparent || (o.material?.opacity ?? 1) < 1)) {
+        transparents.push(o.name || "(sans nom)");
+      }
+    });
+    return {
+      rigge: true, skinnes, transparents,
+      etat: joueurRigge.animateur?.etatCourant || null,
+      socketSac: !!joueurRigge.socket,
+      sacSousOs: joueurRigge.socket ? joueurRigge.socket.parent?.name || null : null,
+      mannequinMasque: !player.userData.body.visible,
+    };
+  },
+  get assets() { return { ...assets.etat, journal: journalAssets.slice() }; },
+  /**
+   * Inventaire des textures réellement en scène.
+   *
+   * La 0.5 n'en chargeait aucune, et trois suites vérifiaient « textures === 0 ».
+   * La 0.6 en charge délibérément : les packs d'assets sont peints sur un atlas
+   * de gradient. L'invariant utile n'est donc plus « zéro » mais celui de
+   * ART_DIRECTION_0.6.md — peu d'atlas, partagés, et aucun grand format.
+   */
+  get textures() {
+    const vues = new Map();
+    scene.traverse((o) => {
+      const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+      for (const m of mats) {
+        for (const canal of ["map", "normalMap", "roughnessMap", "emissiveMap", "aoMap"]) {
+          const t = m[canal];
+          if (!t || vues.has(t.uuid)) continue;
+          const img = t.image;
+          vues.set(t.uuid, {
+            canal,
+            largeur: img?.width ?? null,
+            hauteur: img?.height ?? null,
+          });
+        }
+      }
+    });
+    const liste = [...vues.values()];
+    return {
+      distinctes: liste.length,
+      plusGrande: liste.reduce((m, t) => Math.max(m, t.largeur || 0, t.hauteur || 0), 0),
+      liste,
+    };
+  },
   get bagTier() { return game.bagTier(); },
   get speedFactor() { return game.speedFactor(); },
   get canSprint() { return game.canSprint(); },

@@ -128,6 +128,93 @@ const centre2 = await p2.evaluate(() =>
 ok("animtest: le banc est visible", centre2 === "CANVAS", `${centre2} au centre`);
 await p2.close();
 
+console.log("\n=== LE JOUEUR DANS LE JEU (§4 et §5) ===");
+const jeu = await browser.newPage({ ...devices["Pixel 7"] });
+const errJeu = [];
+jeu.on("pageerror", (e) => errJeu.push(String(e)));
+jeu.on("console", (m) => { if (m.type() === "error") errJeu.push(m.text()); });
+await jeu.goto(`${BASE}/index.html?fogtest`, { waitUntil: "load", timeout: 90000 });
+await jeu.waitForFunction(() => window.HORIZON?.engine, null, { timeout: 90000 });
+await jeu.waitForFunction(() => window.HORIZON.joueur.rigge === true, null, { timeout: 120000 });
+await jeu.waitForTimeout(2000);
+
+const j = await jeu.evaluate(() => window.HORIZON.joueur);
+console.log(`   ${JSON.stringify(j)}`);
+
+ok("joueur: le personnage riggé a remplacé le mannequin",
+   j.rigge === true && j.mannequinMasque === true);
+ok("joueur: aucune partie transparente", j.transparents.length === 0,
+   j.transparents.join(", ") || "aucune");
+ok("joueur: le sac est accroché au squelette",
+   j.socketSac === true && j.sacSousOs === "chest", `os « ${j.sacSousOs} »`);
+
+// Les trois états demandés par le §4, pilotés par le mouvement réel.
+const etats = await jeu.evaluate(async () => {
+  const attendre = (ms) => new Promise((r) => setTimeout(r, ms));
+  const out = {};
+  await attendre(400); out.arret = window.HORIZON.joueur.etat;
+  window.HORIZON.move(0, -1); await attendre(900); out.marche = window.HORIZON.joueur.etat;
+  window.HORIZON.setRun(true); await attendre(900); out.course = window.HORIZON.joueur.etat;
+  window.HORIZON.move(0, 0); window.HORIZON.setRun(false);
+  await attendre(900); out.retourArret = window.HORIZON.joueur.etat;
+  return out;
+});
+ok("anim jeu: à l'arrêt, idle", etats.arret === "idle", etats.arret);
+ok("anim jeu: en marche, marche", etats.marche === "marche", etats.marche);
+ok("anim jeu: en course, course", etats.course === "course", etats.course);
+ok("anim jeu: retour à idle après l'arrêt", etats.retourArret === "idle", etats.retourArret);
+
+// Le §5 demande cinq états visuels de sac. Le sac vit désormais sous un os :
+// ce contrôle vérifie que les paliers ET la position au dos ont survécu au
+// changement de parent — c'est exactement ce qu'un reparentage casse.
+const sac = await jeu.evaluate(async () => {
+  const g = window.HORIZON.jeu;
+  const out = [];
+  for (const poids of [0, 20, 45, 70, 95]) {
+    g.state.weight = poids;
+    g.state.inventory.bois = Math.max(1, Math.round(poids / 7));
+    window.HORIZON.drop("bois");
+    await new Promise((r) => setTimeout(r, 130));
+    const s = window.HORIZON.scene.getObjectByName("socket-sac")?.children[0];
+    const joueur = window.HORIZON.scene.getObjectByName("joueur-gltf")?.parent;
+    s?.updateWorldMatrix(true, false);
+    // Mesuré dans le REPÈRE DU JOUEUR, pas en coordonnées monde : le joueur
+    // tourne avec sa direction de marche, et un écart monde change alors de
+    // signe sans que le sac ait bougé d'un millimètre sur le dos.
+    const w = s && joueur
+      ? joueur.worldToLocal(s.getWorldPosition(new s.position.constructor()))
+      : null;
+    out.push({ poids, palier: window.HORIZON.bagTier,
+      echelle: s ? +s.scale.z.toFixed(3) : null,
+      dosY: w ? +w.y.toFixed(2) : null,
+      dosZ: w ? +w.z.toFixed(2) : null });
+  }
+  return out;
+});
+for (const l of sac) {
+  console.log(`   ${String(l.poids).padStart(3)} kg → palier ${l.palier} · échelle ${l.echelle} · dos y${l.dosY} z${l.dosZ}`);
+}
+const paliers = new Set(sac.map((l) => l.palier));
+ok("sac: le poids fait varier le palier", paliers.size >= 3,
+   `paliers vus : ${[...paliers].join(", ")}`);
+ok("sac: le volume grandit avec la charge",
+   sac[sac.length - 1].echelle > sac[0].echelle * 1.5,
+   `${sac[0].echelle} → ${sac[sac.length - 1].echelle}`);
+// L'avant du personnage est son +Z local : un sac au dos a donc un z NÉGATIF.
+ok("sac: il reste porté au dos à toutes les charges",
+   sac.every((l) => l.dosZ < -0.2 && l.dosY > 0.9 && l.dosY < 2),
+   `z local de ${Math.min(...sac.map((l) => l.dosZ))} à ${Math.max(...sac.map((l) => l.dosZ))}, `
+   + `y de ${Math.min(...sac.map((l) => l.dosY))} à ${Math.max(...sac.map((l) => l.dosY))}`);
+
+const coutJeu = await jeu.evaluate(() => window.HORIZON.info);
+console.log(`   coût en jeu : ${coutJeu.calls} calls · ${coutJeu.tris} tris · ${coutJeu.geometries} géo`);
+ok("perf: moins de 120 appels de rendu en jeu", coutJeu.calls < 120, `${coutJeu.calls} calls`);
+
+const errJeuReelles = errJeu.filter((e) => !e.includes("favicon"));
+ok("joueur: aucune erreur console en jeu", errJeuReelles.length === 0,
+   errJeuReelles.slice(0, 2).join(" | ") || "propre");
+await jeu.close();
+
 console.log("\n=== ERREURS ===");
 const reelles = erreurs.filter((e) => !e.includes("favicon"));
 ok("runtime: aucune erreur console", reelles.length === 0,
