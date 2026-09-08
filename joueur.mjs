@@ -20,13 +20,24 @@
  *    donc SOUS un os, avec un compensateur qui préserve exactement ses
  *    coordonnées d'origine — voir `poserSocketSac()`.
  *
- * 3. LE PERSONNAGE REGARDE VERS +Z. C'est la convention du mannequin
- *    procédural (« l'avant du personnage est son +Z local »), et tout le
- *    moteur en dépend : `player.rotation.y = atan2(moveX, moveZ)`. Les modèles
- *    KayKit regardent nativement vers −Z, d'où la rotation d'un demi-tour.
+ * 3. LE MODÈLE N'EST PAS TOURNÉ. Le moteur oriente déjà le groupe `player`
+ *    avec `rotation.y = atan2(moveX, moveZ)`, ce qui met son +Z local dans la
+ *    direction de marche ; et l'avant natif des modèles KayKit est DÉJÀ leur
+ *    +Z. Toute rotation ajoutée ici s'empile sur celle du moteur.
+ *
+ *    La 0.6 appliquait un demi-tour « pour que le personnage regarde la
+ *    caméra », réglé sur le banc d'essai où le modèle n'a pas de parent tourné.
+ *    En jeu, ce demi-tour s'ajoutait aux 180° du groupe joueur : le total
+ *    revenait à zéro et le personnage marchait À RECULONS, face à la caméra.
+ *    Signalé sur appareil, confirmé par capture d'écran.
+ *
+ *    La valeur est donc établie par l'image, pas par le raisonnement — c'est
+ *    la troisième fois dans ce projet qu'un raisonnement d'orientation se
+ *    trompe et qu'une capture tranche.
  */
 
 import * as THREE from "three";
+import { ORIENTATION_MODELE } from "./assetmanager.mjs";
 
 /** Le personnage du joueur. Capuche : c'est la silhouette du nomade. */
 export const CLE_JOUEUR = "nomade_capuche";
@@ -34,6 +45,21 @@ export const CLE_JOUEUR = "nomade_capuche";
 /** Os d'accroche du sac. Le torse plutôt que le bassin : un sac porté au dos
     suit la flexion du buste, pas la rotation des hanches. */
 const OS_SAC = /^chest$/i;
+
+
+/**
+ * Part de la largeur du torse que le sac occupe À VIDE.
+ *
+ * Il ne faut pas lire ce nombre comme la taille finale : `updateBagVisual()`
+ * fait encore grossir le sac de 32 % en largeur et de 44 % en hauteur au
+ * dernier palier de charge. À 0,62 le sac chargé était aussi haut que le
+ * buste et effaçait la silhouette — exactement ce que ART_DIRECTION_0.6.md
+ * interdit. 0,50 laisse la charge se voir sans faire disparaître le nomade.
+ */
+const LARGEUR_SAC_RELATIVE = 0.50;
+
+/** Recul du sac derrière la surface du dos, en fraction de sa propre épaisseur. */
+const RECUL_SAC = 0.55;
 
 /**
  * Vitesses de référence du moteur, pour caler la cadence du pas sur la vitesse
@@ -75,7 +101,7 @@ export async function habillerJoueur({ player, assets, log = () => {} }) {
 
   // --- pose du personnage ------------------------------------------------
   const corps = instance.objet;
-  corps.rotation.y = Math.PI;   // voir la contrainte 3 en tête de fichier
+  corps.rotation.y = ORIENTATION_MODELE;   // voir la contrainte 3 en tête de fichier
   corps.name = "joueur-gltf";
   player.add(corps);
 
@@ -127,17 +153,32 @@ export async function habillerJoueur({ player, assets, log = () => {} }) {
 }
 
 /**
- * Accroche le sac à un os, sans changer ses coordonnées.
+ * Accroche le sac au dos, sur l'os du torse.
  *
- * Le problème : `updateBagVisual()` écrit des positions ABSOLUES en espace
- * joueur (y ≈ 1,36, z ≈ −0,4). Reparenter le sac sous un os ferait lire ces
- * mêmes nombres dans l'espace de l'os, et le sac partirait à un mètre du dos.
+ * LA CAUSE DU BUG « SAC SUR LE VISAGE ».
  *
- * La solution : un compensateur intercalé, dont la matrice vaut la transformée
- * qui envoie l'espace du joueur sur l'espace de l'os, figée à la pose de
- * repos. Le sac garde alors ses coordonnées d'origine ET suit le torse.
+ * Le sac est construit dans fognomad.mjs aux coordonnées du MANNEQUIN
+ * procédural : y ≈ 1,36, z ≈ −0,4. Sur ce mannequin, la tête est une petite
+ * sphère à y ≈ 1,99 et le buste à y ≈ 1,30 — 1,36 est donc le haut du dos.
  *
- * Renvoie null si l'os est introuvable — le sac reste alors sous le joueur,
+ * Le personnage KayKit a des proportions héroïques et une tête ÉNORME : son
+ * maillage de tête occupe y 1,07 à 2,20, le torse 0,35 à 1,31, l'os `chest`
+ * est à 0,944. À 1,36, on n'est plus dans le dos : on est en plein dans le
+ * visage. Le premier correctif se contentait de préserver les coordonnées
+ * d'origine — il préservait donc fidèlement une position devenue fausse.
+ *
+ * La correction ne « décale » rien à la main : elle MESURE le corps du modèle
+ * et pose le sac par rapport à lui. Un autre personnage, d'autres proportions,
+ * et l'ancrage suit tout seul.
+ *
+ * Le compensateur applique, dans l'ordre : passage en espace os, translation
+ * vers l'ancre mesurée, mise à l'échelle sur la largeur du torse, puis
+ * annulation de la position d'auteur. Un enfant posé à sa coordonnée d'auteur
+ * atterrit donc exactement sur l'ancre — et les caisses de charge, qui sont
+ * positionnées dans le même repère, suivent sans qu'une ligne de fognomad.mjs
+ * ne change.
+ *
+ * Renvoie null si l'os est introuvable : le sac reste alors sous le joueur,
  * ce qui est le comportement de la 0.5 et n'a rien de cassé.
  */
 function poserSocketSac(player, corps, sac, log) {
@@ -146,21 +187,87 @@ function poserSocketSac(player, corps, sac, log) {
   let os = null;
   corps.traverse((o) => { if (!os && o.isBone && OS_SAC.test(o.name)) os = o; });
   if (!os) {
-    log(`Joueur : aucun os « chest » trouvé, le sac reste en coordonnées joueur.`);
+    log("Joueur : aucun os « chest » trouvé, le sac reste en coordonnées joueur.");
     return null;
   }
 
   // Les matrices monde ne valent quelque chose qu'une fois la scène à jour.
   player.updateWorldMatrix(true, true);
 
+  // --- mesure du TORSE, dans le repère du joueur -------------------------
+  //
+  // Le torse et lui seul. Mesurer tous les maillages skinnés donnait 1,94 de
+  // large — c'est l'envergure des bras écartés en pose de repos, pas la
+  // largeur d'un dos, et le sac s'en trouvait deux fois trop grand. Le repère
+  // utile pour un sac à dos, c'est le buste.
+  const bustes = [];
+  corps.traverse((o) => {
+    if (o.isSkinnedMesh && /body|torso|chest/i.test(o.name)) bustes.push(o);
+  });
+  // Repli : si le pack ne nomme pas son torse, tous les maillages skinnés,
+  // en sachant que la largeur sera surestimée.
+  if (!bustes.length) corps.traverse((o) => { if (o.isSkinnedMesh) bustes.push(o); });
+
+  const boite = new THREE.Box3();
+  const p = new THREE.Vector3();
+  for (const o of bustes) {
+    const pos = o.geometry?.attributes?.position;
+    if (!pos) continue;
+    for (let i = 0; i < pos.count; i += 3) {   // un sommet sur trois : la boîte n'a pas besoin de plus
+      p.fromBufferAttribute(pos, i);
+      o.localToWorld(p);
+      player.worldToLocal(p);
+      boite.expandByPoint(p);
+    }
+  }
+
+  const taille = boite.getSize(new THREE.Vector3());
+  const posAuteur = sac.position.clone();
+
+  // Épaisseur du sac telle qu'elle est dessinée, avant toute mise à l'échelle.
+  const boiteSac = new THREE.Box3().setFromObject(sac);
+  const tailleSac = boiteSac.getSize(new THREE.Vector3());
+  const largeurSac = tailleSac.x || 0.5;
+  const epaisseurSac = tailleSac.z || 0.3;
+
+  const echelle = Math.max(0.4, Math.min(2.5,
+    (taille.x * LARGEUR_SAC_RELATIVE) / largeurSac));
+
+  // Ancre : à la hauteur de l'os du torse, juste derrière la surface du dos.
+  const chest = os.getWorldPosition(new THREE.Vector3());
+  player.worldToLocal(chest);
+
+  // Légèrement sous l'os du torse : un sac se porte au milieu du dos, pas sur
+  // les épaules. Sans ce décalage, le sac chargé montait dans la nuque.
+  const ancre = new THREE.Vector3(
+    0,
+    chest.y - taille.y * 0.08,
+    boite.min.z - epaisseurSac * echelle * RECUL_SAC,
+  );
+
   const compensateur = new THREE.Object3D();
   compensateur.name = "socket-sac";
   compensateur.matrixAutoUpdate = false;
-  compensateur.matrix
-    .copy(os.matrixWorld).invert()
-    .multiply(player.matrixWorld);
+
+  const versOs = new THREE.Matrix4().copy(os.matrixWorld).invert().multiply(player.matrixWorld);
+  const versAncre = new THREE.Matrix4().makeTranslation(ancre.x, ancre.y, ancre.z);
+  const mise = new THREE.Matrix4().makeScale(echelle, echelle, echelle);
+  const retourAuteur = new THREE.Matrix4().makeTranslation(-posAuteur.x, -posAuteur.y, -posAuteur.z);
+
+  compensateur.matrix.copy(versOs).multiply(versAncre).multiply(mise).multiply(retourAuteur);
 
   os.add(compensateur);
-  compensateur.add(sac);      // retire le sac de `player` au passage
+
+  // Le sac ET ses caisses de charge doivent partager le même parent : elles
+  // sont positionnées dans le même repère par updateBagVisual(). En laisser
+  // une sous `player` les faisait diverger dès que le torse bougeait.
+  const caisses = player.children.filter((o) => o.userData && "palier" in o.userData);
+  compensateur.add(sac, ...caisses);
+
+  log(`Sac ancré — torse ${taille.x.toFixed(2)}×${taille.y.toFixed(2)}×${taille.z.toFixed(2)} `
+    + `(${bustes.map((o) => o.name).join("+") || "aucun"}), `
+    + `ancre y${ancre.y.toFixed(2)} z${ancre.z.toFixed(2)}, échelle ${echelle.toFixed(2)}, `
+    + `${caisses.length} caisse(s) suivies.`);
+
   return compensateur;
 }

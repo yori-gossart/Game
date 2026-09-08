@@ -28,7 +28,17 @@ const page = await browser.newPage({ ...devices["Pixel 7"] });
 const erreurs = [];
 page.on("pageerror", (e) => erreurs.push(String(e)));
 page.on("console", (m) => { if (m.type() === "error") erreurs.push(m.text()); });
-page.on("requestfailed", (r) => erreurs.push(`REQ ${r.url()} ${r.failure()?.errorText}`));
+/* Un abandon de requête n'est un défaut que si l'asset n'est PAS arrivé.
+   Mesuré sur ce banc : les quatre .glb reçoivent un HTTP 200, puis un
+   ERR_ABORTED arrive ~34 ms APRÈS la réponse sur l'un d'eux, sans effet — le
+   gestionnaire compte 4 téléchargements et 0 échec. C'est un événement de la
+   couche réseau sur un flux déjà servi. On ne le masque donc pas : on ne le
+   retient que pour les URL qui n'ont jamais reçu de réponse. */
+const servies = new Set();
+page.on("response", (r) => { if (r.status() < 400) servies.add(r.url()); });
+page.on("requestfailed", (r) => {
+  if (!servies.has(r.url())) erreurs.push(`REQ ${r.url()} ${r.failure()?.errorText}`);
+});
 
 await page.goto(`${BASE}/index.html?arttest`, { waitUntil: "load", timeout: 90000 });
 await page.waitForFunction(() => window.ARTTEST?.pret, null, { timeout: 120000 });
@@ -148,6 +158,70 @@ ok("joueur: aucune partie transparente", j.transparents.length === 0,
 ok("joueur: le sac est accroché au squelette",
    j.socketSac === true && j.sacSousOs === "chest", `os « ${j.sacSousOs} »`);
 
+/* ── Les deux fautes signalées sur appareil en 0.6 ───────────────────────────
+   Elles ont un point commun : mes contrôles disaient vrai et ne regardaient
+   pas le personnage. « sac derrière, z négatif » était exact ET le sac était
+   sur le visage ; « état marche » était exact ET le personnage reculait.
+   Les deux assertions ci-dessous mesurent ce qui manquait. */
+
+// 1. À RECULONS. Le produit scalaire entre le « devant » du moteur et le
+//    regard du modèle vaut +1 s'ils sont d'accord, −1 s'ils s'opposent.
+const orientation = await jeu.evaluate(() => {
+  const corps = window.HORIZON.scene.getObjectByName("joueur-gltf");
+  const player = corps.parent;
+  player.updateWorldMatrix(true, true);
+  const V = corps.position.constructor;
+  const Q = corps.quaternion.constructor;
+  const avant = new V(0, 0, 1).applyQuaternion(player.getWorldQuaternion(new Q()));
+  const regard = new V(0, 0, 1).applyQuaternion(corps.getWorldQuaternion(new Q()));
+  return +avant.dot(regard).toFixed(3);
+});
+ok("orientation: le personnage regarde là où le moteur avance",
+   orientation > 0.95, `accord ${orientation} (−1 = à reculons)`);
+
+// 2. SAC SUR LE VISAGE. Il ne suffit pas d'être « derrière » : il faut être
+//    SOUS la tête. Le maillage de tête de ce pack commence à y ≈ 1,07, et le
+//    sac était ancré à 1,36 — derrière, et en plein visage.
+const anatomie = await jeu.evaluate(() => {
+  const corps = window.HORIZON.scene.getObjectByName("joueur-gltf");
+  const player = corps.parent;
+  player.updateWorldMatrix(true, true);
+  const V = corps.position.constructor;
+  let teteMin = Infinity;
+  corps.traverse((o) => {
+    if (!o.isSkinnedMesh || !/head/i.test(o.name)) return;
+    const pos = o.geometry.attributes.position;
+    const p = new V();
+    for (let i = 0; i < pos.count; i += 5) {
+      p.fromBufferAttribute(pos, i); o.localToWorld(p); player.worldToLocal(p);
+      teteMin = Math.min(teteMin, p.y);
+    }
+  });
+  const sac = window.HORIZON.scene.getObjectByName("socket-sac")?.children[0];
+  sac.updateWorldMatrix(true, false);
+  const l = player.worldToLocal(sac.getWorldPosition(new V()));
+  return { teteMin: +teteMin.toFixed(3), sacY: +l.y.toFixed(3), sacZ: +l.z.toFixed(3) };
+});
+console.log(`   bas de la tête y=${anatomie.teteMin} · sac y=${anatomie.sacY} z=${anatomie.sacZ}`);
+ok("sac: il est sous la tête, pas devant le visage",
+   anatomie.sacY < anatomie.teteMin,
+   `sac ${anatomie.sacY} vs bas de tête ${anatomie.teteMin}`);
+ok("sac: il est bien derrière le corps",
+   anatomie.sacZ < -0.2, `z ${anatomie.sacZ}`);
+
+// 3. Aucun accessoire rigide non déformé : la cape était un plan plat accroché
+//    à un os, qui flottait à côté du personnage.
+const rigides = await jeu.evaluate(() => {
+  const corps = window.HORIZON.scene.getObjectByName("joueur-gltf");
+  const out = [];
+  corps.traverse((o) => {
+    if (o.isMesh && !o.isSkinnedMesh && o.parent?.isBone) out.push(o.name || "(sans nom)");
+  });
+  return out;
+});
+ok("rig: aucun accessoire rigide accroché à un os",
+   rigides.length === 0, rigides.join(", ") || "aucun");
+
 // Les trois états demandés par le §4, pilotés par le mouvement réel.
 const etats = await jeu.evaluate(async () => {
   const attendre = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -201,10 +275,14 @@ ok("sac: le volume grandit avec la charge",
    sac[sac.length - 1].echelle > sac[0].echelle * 1.5,
    `${sac[0].echelle} → ${sac[sac.length - 1].echelle}`);
 // L'avant du personnage est son +Z local : un sac au dos a donc un z NÉGATIF.
+// Et la borne haute n'est plus un nombre écrit à la main — c'est le bas de la
+// tête mesuré plus haut. La version 0.6 exigeait « y > 0,9 », borne héritée du
+// mannequin, qui laissait passer un sac plaqué sur le visage.
 ok("sac: il reste porté au dos à toutes les charges",
-   sac.every((l) => l.dosZ < -0.2 && l.dosY > 0.9 && l.dosY < 2),
+   sac.every((l) => l.dosZ < -0.2 && l.dosY < anatomie.teteMin),
    `z local de ${Math.min(...sac.map((l) => l.dosZ))} à ${Math.max(...sac.map((l) => l.dosZ))}, `
-   + `y de ${Math.min(...sac.map((l) => l.dosY))} à ${Math.max(...sac.map((l) => l.dosY))}`);
+   + `y de ${Math.min(...sac.map((l) => l.dosY))} à ${Math.max(...sac.map((l) => l.dosY))} `
+   + `(bas de tête ${anatomie.teteMin})`);
 
 const coutJeu = await jeu.evaluate(() => window.HORIZON.info);
 console.log(`   coût en jeu : ${coutJeu.calls} calls · ${coutJeu.tris} tris · ${coutJeu.geometries} géo`);

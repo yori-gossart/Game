@@ -131,7 +131,7 @@
        coûterait plusieurs secondes avant la première image. -->
   <script type="module">
     const p = new URLSearchParams(location.search);
-    const banc = p.has("arttest") || p.has("animtest");
+    const banc = p.has("arttest") || p.has("animtest") || p.has("playertest");
     // La classe est posée AVANT le chargement du module : sans elle, l'écran
     // de chargement du jeu (z-index 20) recouvre le banc, qui tourne alors
     // invisible — observé sur l'appareil, et corrigé ici.

@@ -58,8 +58,19 @@ export const CATALOGUE = {
   nomade_charge:  { url: "assets/characters/nomade_charge.glb",  type: "personnage" },
 };
 
-/** Objets à retirer de TOUT personnage : armes et projectiles. */
-const ARMES = /crossbow|knife|throwable|sword|axe|shield|staff|wand|bow|arrow|dagger|spear|hammer/i;
+/**
+ * Objets à retirer de TOUT personnage.
+ *
+ * Les armes d'abord : le jeu n'a ni ennemi ni combat, et une arbalète dans le
+ * dos d'un nomade contredirait la seule chose qu'il raconte.
+ *
+ * La cape ensuite, et pour une raison technique. Dans ces packs elle est un
+ * PLAN RIGIDE non skinné accroché à un os : elle ne se déforme pas avec
+ * l'animation et reste une plaque plate qui traverse le corps. Sur appareil
+ * elle se lisait comme un gros polygone vert flottant à côté du personnage —
+ * signalée comme un défaut d'affichage, à juste titre.
+ */
+const ARMES = /crossbow|knife|throwable|sword|axe|shield|staff|wand|bow|arrow|dagger|spear|hammer|cape/i;
 
 /** Un objet est-il à retirer de ce modèle-ci ? Armes partout, plus le filtre
     propre à l'entrée du catalogue quand elle en déclare un. */
@@ -82,6 +93,21 @@ export const CLIPS = {
   fuite:  ["Running_B", "Running_A", "Run", "RUN"],
   ramasse: ["PickUp", "Interact", "Use_Item"],
 };
+
+/**
+ * Avant natif des modèles du catalogue, en rotation Y à appliquer pour qu'un
+ * personnage regarde le +Z de son parent.
+ *
+ * ZÉRO : l'avant de ces modèles EST déjà leur +Z. Établi par capture d'écran,
+ * dans le jeu et sur le banc — à 0 le personnage fait face à une caméra placée
+ * en +Z, à π il lui tourne le dos.
+ *
+ * La constante est ici, et pas dupliquée chez les appelants, parce que la 0.6
+ * a livré un banc et un jeu qui l'avaient réglée différemment : le banc était
+ * juste à l'œil, le jeu marchait à reculons. Une seule source, une seule
+ * chance de se tromper.
+ */
+export const ORIENTATION_MODELE = 0;
 
 export function createAssetManager({ onLog = () => {} } = {}) {
   const loader = new GLTFLoader();

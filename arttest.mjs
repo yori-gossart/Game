@@ -22,10 +22,24 @@
  */
 
 import * as THREE from "three";
-import { createAssetManager, CLIPS } from "./assetmanager.mjs";
+import { createAssetManager, CLIPS, ORIENTATION_MODELE } from "./assetmanager.mjs";
 
 const PARAMS = new URLSearchParams(location.search);
 const MODE_ANIM = PARAMS.has("animtest");
+const MODE_JOUEUR = PARAMS.has("playertest");
+
+/**
+ * ?playertest — le banc du joueur, né des deux bugs signalés sur appareil.
+ *
+ * Le sac accroché au visage et la marche à reculons avaient un point commun :
+ * ils étaient INVISIBLES pour tous mes contrôles automatiques. Les sondes
+ * disaient « sac derrière, z négatif » et « état marche » — les deux vrais, et
+ * les deux inutiles, parce qu'aucun ne regardait le personnage.
+ *
+ * Ce mode montre le joueur seul, avec les repères qui rendent ces deux fautes
+ * impossibles à manquer : une flèche au sol qui indique où le moteur croit
+ * aller, et une vue de profil où un sac sur le visage saute aux yeux.
+ */
 
 // ---------------------------------------------------------------------------
 // Scène : neutre par conception.
@@ -133,6 +147,8 @@ function etiquette(texte, x, z) {
 }
 
 async function monter() {
+  if (MODE_JOUEUR) return monterJoueur();
+
   const cles = Object.keys(assets.catalogue);
   const bilan = await assets.precharger(cles);
 
@@ -150,7 +166,9 @@ async function monter() {
 
     const x = debut + i * PAS;
     inst.objet.position.set(x, 0, 0);
-    inst.objet.rotation.y = Math.PI;   // face à la caméra
+    // La caméra du banc est en +Z : à l'orientation native, le personnage lui
+    // fait donc face. Le demi-tour ajouté en 0.6 montrait des dos.
+    inst.objet.rotation.y = ORIENTATION_MODELE;
     scene.add(inst.objet);
 
     const m = mesurer(inst.objet);
@@ -176,6 +194,88 @@ async function monter() {
   cadrer();
   construireBarre();
   rafraichirHud(bilan);
+}
+
+/**
+ * Banc du joueur : un seul personnage, son sac, et les repères d'orientation.
+ *
+ * On rejoue ici EXACTEMENT ce que fait le jeu — même module `joueur.mjs`, même
+ * ancrage de sac — sur un faux groupe `player` qui imite celui du moteur. Un
+ * banc qui monterait le personnage autrement ne prouverait rien du jeu.
+ */
+async function monterJoueur() {
+  const { habillerJoueur, CLE_JOUEUR } = await import("./joueur.mjs");
+  await assets.precharger([CLE_JOUEUR]);
+
+  // Faux joueur, aux mêmes conventions que le moteur : un groupe dont le +Z
+  // local est la direction de marche, et un sac en coordonnées d'auteur.
+  const faux = new THREE.Group();
+  const sac = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.56, 0.3),
+    new THREE.MeshStandardMaterial({ color: 0x7d5734, roughness: 0.9 }),
+  );
+  sac.position.set(0, 1.36, -0.4);
+  sac.name = "sac-test";
+  faux.add(sac);
+  faux.userData = { bag: sac, body: new THREE.Object3D() };
+  scene.add(faux);
+
+  const habit = await habillerJoueur({ player: faux, assets, log: (m) => journal.push(m) });
+  if (!habit) { hud.textContent = "joueur indisponible"; return; }
+
+  sujets.push({ nom: "joueur", racine: faux, animateur: habit.animateur,
+                cle: CLE_JOUEUR, mesure: mesurer(faux), inst: habit, habit, sac });
+
+  // --- repères d'orientation --------------------------------------------
+  // Une flèche au sol dans le +Z local du groupe : c'est LA direction que le
+  // moteur considère comme « devant ». Si le personnage ne la suit pas du
+  // regard, il marche à reculons — et cela se voit sans réfléchir.
+  const fleche = new THREE.Mesh(
+    new THREE.ConeGeometry(0.18, 0.6, 4),
+    new THREE.MeshStandardMaterial({ color: 0xffb43a }),
+  );
+  fleche.rotation.x = Math.PI / 2;
+  fleche.position.set(0, 0.05, 1.15);
+  faux.add(fleche);
+  const tige = new THREE.Mesh(
+    new THREE.BoxGeometry(0.09, 0.02, 1.0),
+    new THREE.MeshStandardMaterial({ color: 0xffb43a }),
+  );
+  tige.position.set(0, 0.03, 0.42);
+  faux.add(tige);
+  etiquette("DEVANT", 0, 1.5);
+
+  // Rotation lente du personnage : elle montre le sac sous tous les angles,
+  // ce qui est le seul moyen fiable de voir qu'il est bien au dos.
+  faux.userData.tourner = true;
+
+  cadrer();
+  construireBarreJoueur(faux, sac, habit);
+  rafraichirHud([{ cle: CLE_JOUEUR, pret: true }]);
+}
+
+/** Commandes propres au banc du joueur : états d'animation et paliers de charge. */
+function construireBarreJoueur(faux, sac, habit) {
+  for (const e of ["idle", "marche", "course", "fuite", "ramasse"]) {
+    const b = bouton(e, () => appliquerAnim(e), e === etatAnim);
+    b.dataset.etat = e;
+    boutonsAnim.push(b);
+  }
+  // Cinq paliers de charge, comme dans le jeu : le sac doit rester au dos à
+  // toutes les charges, et ne jamais avaler la silhouette.
+  let palier = 0;
+  bouton("charge +", () => {
+    palier = (palier + 1) % 5;
+    sac.scale.set(1 + palier * 0.08, 1 + palier * 0.11, 1 + palier * 0.28);
+    sac.position.y = 1.36 + palier * 0.03;
+    sac.position.z = -0.4 - palier * 0.05;
+  });
+  bouton("rotation", () => { faux.userData.tourner = !faux.userData.tourner; });
+  bouton("profil", () => {
+    // Vue de profil stricte : c'est l'angle où un sac mal ancré se voit.
+    orbite.angle = Math.PI / 2; orbite.hauteur = 0.30; orbite.distance = 6.4;
+  });
+  bouton("journal", () => { hud.classList.toggle("ouvert"); });
 }
 
 /** Cadre la caméra sur l'ensemble des sujets, quelle que soit leur quantité. */
@@ -274,7 +374,10 @@ function boucle() {
   requestAnimationFrame(boucle);
   const delta = Math.min(horloge.getDelta(), 0.05);
 
-  for (const s of sujets) s.animateur?.update(delta);
+  for (const s of sujets) {
+    s.animateur?.update(delta);
+    if (s.racine.userData?.tourner) s.racine.rotation.y += delta * 0.55;
+  }
 
   camera.position.set(
     orbite.cible.x + Math.sin(orbite.angle) * orbite.distance,
@@ -335,6 +438,30 @@ window.ARTTEST = {
     };
   },
   jouer: (e) => appliquerAnim(e),
+  /**
+   * Orientation et ancrage, mesurés — les deux fautes de la 0.6.
+   *
+   * `avant` est le +Z du groupe joueur (ce que le moteur appelle « devant »),
+   * `regard` le +Z du modèle. S'ils pointent dans des sens opposés, le
+   * personnage marche à reculons.
+   */
+  get joueur() {
+    const s = sujets.find((x) => x.habit);
+    if (!s) return null;
+    const V = THREE.Vector3;
+    s.racine.updateWorldMatrix(true, true);
+    const avant = new V(0, 0, 1).applyQuaternion(s.racine.getWorldQuaternion(new THREE.Quaternion()));
+    const regard = new V(0, 0, 1).applyQuaternion(s.habit.corps.getWorldQuaternion(new THREE.Quaternion()));
+    const sac = s.sac;
+    sac.updateWorldMatrix(true, false);
+    const local = s.racine.worldToLocal(sac.getWorldPosition(new V()));
+    return {
+      accord: +avant.dot(regard).toFixed(3),   // 1 = même sens, -1 = à reculons
+      sacLocal: { x: +local.x.toFixed(3), y: +local.y.toFixed(3), z: +local.z.toFixed(3) },
+      socket: !!s.habit.socket,
+      etat: s.animateur?.etatCourant || null,
+    };
+  },
   get journal() { return journal.slice(); },
   get pret() { return sujets.length > 0 || assets.etat.echecs > 0; },
 };
