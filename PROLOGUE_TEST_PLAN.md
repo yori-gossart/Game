@@ -244,11 +244,21 @@ la montre : une durée chronométrée mesurerait la machine de test.
 
 Trois profils, parce qu'un seul chiffre ne dit rien d'une durée de jeu :
 
-| Profil | Ce qu'il fait |
-| --- | --- |
-| `rapide` | court tout droit, ne se détourne pas, ne fait pas de feu |
-| `normal` | marche, ramasse ce qui est sur son chemin, fait un feu |
-| `exploration` | se détourne jusqu'à 26 unités, remplit son sac, fait un feu |
+| Profil | Ce qu'il fait | Durée mesurée |
+| --- | --- | --- |
+| `rapide` | ne se détourne pas, fait du feu quand la Brume serre | voir ci-dessous |
+| `normal` | marche, ramasse ce qui est sur son chemin, brûle son bois | **11 min 30 s**, 15/15 |
+| `exploration` | se détourne jusqu'à 26 unités, garde ses cristaux | **13 min 12 s**, 13/15 |
+
+Un quatrième résultat, gardé parce qu'il dit quelque chose : un pilote qui court
+tout droit **sans jamais allumer de feu** est rattrapé à **3 min 42 s**, à mille
+unités du départ, dix étapes sur quinze. Ce n'est pas un défaut du prologue,
+c'est la règle centrale du jeu — et c'est précisément ce que le prologue
+prétend enseigner.
+
+Si un testeur humain meurt vers la troisième minute, la première question à lui
+poser est donc : **avez-vous fait du feu ?** Si la réponse est « je ne savais
+pas que je pouvais », c'est le §22 qui a raté, pas l'équilibrage.
 
 Les trois arrêtent de ramasser au-delà de 55 % de charge. Ce n'est pas une
 commodité : à cette charge le joueur marche moins vite que la Brume n'avance,

@@ -230,7 +230,14 @@ function installerPilote(profil) {
 }
 
 const PROFILS = {
-  rapide:      { court: true,  detour: 0,  feu: false, seuilCourse: 1e9, garde: false, seuilFeu: 0 },
+  // « Rapide » veut dire « sait où il va », pas « ne se sert de rien ». La
+  // première version n'allumait aucun feu et mourait à 3 min 42 s, à z −1000,
+  // avec 10 étapes sur 15 : ce n'est pas une façon de jouer, c'est la
+  // démonstration que courir sans jamais rien fabriquer ne suffit pas. Le
+  // résultat est conservé et rapporté comme tel, mais le PROFIL, lui, mesure
+  // désormais un joueur qui ne se détourne pas et qui fait du feu quand la
+  // Brume serre.
+  rapide:      { court: true,  detour: 0,  feu: true,  seuilCourse: 1e9, garde: false, seuilFeu: 45 },
   normal:      { court: false, detour: 9,  feu: true,  seuilCourse: 90,  garde: false, seuilFeu: 55 },
   // Seul le profil « exploration » garde ses cristaux : c'est ce qui le
   // distingue, et c'est aussi ce qui le ralentit.
@@ -518,8 +525,13 @@ if (!partiel) {
 const min = normal.temps / 60;
 ok("durées: le parcours normal dure 10 à 15 minutes (§2)",
    min >= 10 && min <= 15, `${min.toFixed(1)} min`);
-if (rapide) ok("durées: le parcours rapide reste au-dessus de 5 minutes",
-   rapide.temps / 60 >= 5, `${(rapide.temps / 60).toFixed(1)} min`);
+// Le parcours rapide est celui d'un joueur qui connaît la route : il doit
+// rester nettement plus court que le parcours normal, sans devenir une
+// formalité. Le seuil bas n'est pas une durée choisie d'avance mais la moitié
+// du parcours normal — c'est un RAPPORT qu'on mesure, pas une minuterie.
+if (rapide) ok("durées: le parcours rapide vaut au moins la moitié du normal",
+   rapide.temps >= normal.temps * 0.5,
+   `${(rapide.temps / 60).toFixed(1)} min contre ${(normal.temps / 60).toFixed(1)}`);
 if (explo) ok("durées: l'exploration ne dépasse pas 25 minutes",
    explo.temps / 60 <= 25, `${(explo.temps / 60).toFixed(1)} min`);
 

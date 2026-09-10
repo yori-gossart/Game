@@ -49,6 +49,12 @@ coupure, ni fondu** : le monde procédural était là depuis le début, dessous.
 Le prologue ne touche ni au directeur de monde, ni à la génération de chunks,
 ni au déterminisme par graine.
 
+Il dure **onze minutes et demie** pour un joueur qui marche, ramasse ce qui est
+sur son chemin et se sert de ce qu'il ramasse — mesuré, en jouant, quinze points
+de contrôle franchis dans l'ordre. Treize minutes pour qui fouille. Et trois
+minutes quarante pour qui court tout droit sans jamais faire de feu : celui-là
+se fait rattraper, et c'est la leçon.
+
 `?sansprologue` démarre directement dans le monde procédural.
 `?prologuetest` ajoute un panneau de conduite — voir `PROLOGUE_TEST_PLAN.md`.
 

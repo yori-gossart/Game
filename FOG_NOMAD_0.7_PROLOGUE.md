@@ -378,7 +378,56 @@ dans ce projet.
 
 ---
 
-## 9. Le panneau `?prologuetest`
+## 9. Les durées mesurées (§30)
+
+Trois parcours joués d'un bout à l'autre par le pilote, sur le même build,
+chronométrés en **temps de jeu**.
+
+| Profil | Durée | Étapes | Ramassées | Feux | Issue |
+| --- | --- | --- | --- | --- | --- |
+| rapide | **3 min 42 s** | 10/15 | 13 | **0** | rattrapé par la Brume |
+| normal | **11 min 30 s** | **15/15** | 150 | 40 | terminé |
+| exploration | **13 min 12 s** | 13/15 | 210 | 54 | terminé |
+
+**Le parcours normal tient la cible du §2 : 11 min 30 s, entre dix et quinze
+minutes, avec les quinze points de contrôle franchis dans l'ordre.** Reproduit
+deux fois à deux secondes près (690,1 s et 692,4 s sur la version précédente de
+la géographie), ce qui dit que la mesure porte sur les règles du jeu et non sur
+la cadence de la machine de test.
+
+Le détail des quinze étapes, sur le parcours normal :
+
+| Étape | À |
+| --- | --- |
+| `PROLOGUE_START` → `RUN_OBJECTIVE` | 0 → 10,7 s |
+| `FIRST_RESOURCE` · `FIRST_CRAFT_AVAILABLE` | 11,6 s |
+| `FIRST_FIRE` | 18,2 s |
+| `CONVOY_TRACE_FOUND` · `MAIN_OBJECTIVE_REVEALED` | 240,6 · 244,8 s |
+| `ANCIENT_STRUCTURE_FOUND` → `FOG_REACTION` | 573,2 → 573,8 s |
+| `PROLOGUE_COMPLETE` | 690,1 s |
+
+### Ce que les deux autres parcours disent, et qui n'est pas flatteur
+
+**Le parcours rapide, dans sa première définition, meurt.** Il courait tout
+droit sans jamais rien fabriquer : rattrapé à 3 min 42 s, à mille unités du
+départ, dix étapes sur quinze. Ce n'est pas un défaut du prologue — c'est la
+règle centrale du jeu qui s'applique, et c'est même exactement ce que le
+prologue prétend enseigner. Mais cela veut dire qu'« aller vite » n'est pas une
+façon de jouer tant qu'on ne s'est pas servi du feu, et le profil a été
+redéfini en conséquence : ne pas se détourner, mais faire du feu quand la Brume
+serre.
+
+**Le parcours exploration n'a franchi que 13 étapes sur 15**, tout en allant
+jusqu'au bout du parcours. Il se détourne jusqu'à 26 unités vers les
+ressources, et cette dérive latérale accumulée le fait passer à côté des traces
+du convoi malgré le rayon de 26 unités et la pose tardive sur son axe. C'est le
+même mécanisme que le défaut §7.4, atténué mais pas éliminé. Rapporté
+**PARTIEL** : la scène existe et se joue, mais un joueur qui fouille beaucoup
+peut encore la manquer.
+
+---
+
+## 10. Le panneau `?prologuetest`
 
 Le prologue dure une dizaine de minutes et ses étapes ne s'atteignent que dans
 l'ordre. Vérifier la douzième en la jouant coûte onze étapes à chaque essai —
@@ -402,7 +451,7 @@ aperçu avant l'appareil.
 
 ---
 
-## 10. La sortie
+## 11. La sortie
 
 Passé la frontière, le prologue se retire : les quatre objets mis en scène sont
 retirés de la scène et leurs géométries libérées, les acteurs disparaissent, le
@@ -419,7 +468,7 @@ moment identifiable où « le jeu commence », elle a raté.
 
 ---
 
-## 11. La passe visuelle sur la Brume : NON FAITE, et pourquoi
+## 12. La passe visuelle sur la Brume : NON FAITE, et pourquoi
 
 Le §37 demande que la Brume soit « immédiatement reconnaissable sur une capture
 d'écran ». Elle ne l'est pas, et rien n'a été livré pour y remédier. Ce qui
@@ -480,7 +529,7 @@ abordés non plus.
 
 ---
 
-## 12. Aucun asset externe ajouté
+## 13. Aucun asset externe ajouté
 
 Une version qui met en scène une tour-balise, un pilier ancien, des ornières de
 convoi et deux cristaux lumineux est exactement le genre de version où un modèle
