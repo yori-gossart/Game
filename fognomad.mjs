@@ -477,10 +477,23 @@ export function createFogNomad(ctx) {
       phase = 0,
       edgeStrength = 0,
       streak = 0.10,
-      floor = 0
+      floor = 0,
+      depth = 0
     } = options;
 
-    const geometry = new THREE.PlaneGeometry(width, height, 26, 7);
+    /* 112 segments, et non 26.
+     *
+     * Mesuré en 0.7, pas estimé : en portrait, le champ HORIZONTAL de la
+     * caméra vaut environ 14°. À trente unités du mur, le joueur n'en voit donc
+     * qu'une bande de QUINZE unités de large. Un plan à 26 segments sur 460
+     * unités porte un sommet toutes les 17,7 unités : il ne peut représenter
+     * aucune forme plus courte que ça, et la bande visible tombait entre deux
+     * sommets. Résultat vérifié en masquant tout le reste de la scène : trois
+     * bandes horizontales de couleur unie, à bords parfaitement droits.
+     *
+     * 112 segments donnent un sommet toutes les 4,1 unités — de quoi porter une
+     * forme que le joueur voit réellement. */
+    const geometry = new THREE.PlaneGeometry(width, height, 112, 8);
     const position = geometry.attributes.position;
     const colors = new Float32Array(position.count * 4);
     const base = new THREE.Color(CONFIG.fog.color);
@@ -492,22 +505,36 @@ export function createFogNomad(ctx) {
       // négative et reste pleinement opaque, ce qui est exactement voulu.
       const y = position.getY(i) + height / 2 + floor;
 
-      // Deux ondes de périodes incommensurables : la crête ne se répète pas
-      // visiblement sur la largeur du mur.
+      // TROIS ÉCHELLES, et c'est la répartition des poids qui compte, pas leur
+      // nombre.
+      //
+      // La 0.7 avait déjà essayé d'AJOUTER une onde courte, à 20 % du poids.
+      // Vérifié par capture : aucune différence. Sur la nappe d'avant-garde
+      // cela donnait un frémissement de 0,6 unité, noyé dans les cinq unités
+      // du dégradé alpha qui adoucit ce bord. Ajouter ne suffisait pas : il
+      // fallait RÉPARTIR.
+      //
+      // Périodes : 300, 114 et 38 unités. Les deux premières sculptent la
+      // silhouette quand le mur barre l'horizon ; la troisième est la seule qui
+      // existe encore quand on le regarde de trente unités et qu'on n'en voit
+      // qu'une bande de quinze. Elle porte donc le poids le plus fort.
       const billow = crest * (
-        Math.sin(x * 0.055 + phase) * 0.62 +
-        Math.sin(x * 0.021 - phase * 1.7) * 0.38
+        Math.sin(x * 0.021 - phase * 1.7) * 0.26 +
+        Math.sin(x * 0.055 + phase) * 0.30 +
+        Math.sin(x * 0.165 + phase * 1.3) * 0.44
       );
 
       const top = crestY * (1 + billow);
       const k = Math.min(1, Math.max(0, (top - y) / soft));
       const alpha = baseAlpha * Math.pow(k, falloff);
 
-      // Traînées verticales : la brume n'est pas une peinture unie. Deux
-      // sinusoïdes croisées suffisent à donner du volume à un plan.
-      const veil = 1 + streak *
-        Math.sin(x * 0.085 + phase * 2.1) *
-        Math.sin(x * 0.031 - phase);
+      // Traînées verticales : la brume n'est pas une peinture unie. La
+      // troisième sinusoïde est courte pour la même raison que la crête
+      // courte — sans elle, la bande de quinze unités que le joueur regarde
+      // est un aplat, et un aplat ne bouge pas.
+      const veil = 1 + streak * (
+        Math.sin(x * 0.085 + phase * 2.1) * Math.sin(x * 0.031 - phase) * 0.55 +
+        Math.sin(x * 0.210 - phase * 1.6) * 0.45);
 
       // La crête s'éclaircit : une vapeur éclairée par le dessus, et surtout
       // une ligne de front repérable au-dessus du corps sombre.
@@ -517,7 +544,29 @@ export function createFogNomad(ctx) {
       colors[i * 4 + 1] = (base.g + (edge.g - base.g) * mix) * veil;
       colors[i * 4 + 2] = (base.b + (edge.b - base.b) * mix) * veil;
       colors[i * 4 + 3] = alpha;
+
+      // LA PROFONDEUR, et c'est elle qui casse le rectangle.
+      //
+      // Faire onduler la CRÊTE ne suffit pas : vue d'en dessous, une nappe
+      // reste un plan, et un plan vu de face est un rectangle quoi qu'on fasse
+      // de son bord supérieur. Le §37 demande « des petites avancées, des
+      // retraits » — ce sont des variations en Z, pas en Y.
+      //
+      // Chaque sommet est donc reculé ou avancé de quelques unités. Le front
+      // cesse d'être une ligne : par endroits la brume déborde vers le joueur,
+      // par d'autres elle creuse. Coût : zéro triangle de plus, les sommets
+      // existaient déjà.
+      //
+      // La déformation s'atténue vers le haut (`profondeur * (1 - k * 0.45)`) :
+      // c'est en bas, là où le mur touche le sol et où le joueur le longe, que
+      // le relief se lit ; en haut il ne ferait que déchirer la silhouette.
+      const relief =
+        Math.sin(x * 0.043 + phase * 0.8) * 0.55 +
+        Math.sin(x * 0.128 - phase * 1.9) * 0.45;
+      position.setZ(i, relief * depth * (1 - k * 0.45));
     }
+    position.needsUpdate = true;
+    geometry.computeVertexNormals();
 
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 4));
     geometry.deleteAttribute("uv");
@@ -554,21 +603,43 @@ export function createFogNomad(ctx) {
   // fragments dessinés là étaient invisibles. C'est du remplissage gagné pour
   // exactement la même image — un GPU mobile est limité par le remplissage
   // bien avant de l'être par le nombre d'appels.
+  /**
+   * Quatre nappes, et `depth` est la nouveauté de la 0.7.1 : de combien chaque
+   * nappe avance et recule EN PROFONDEUR le long de sa largeur.
+   *
+   * Elle croît vers le joueur. Les deux nappes de fond bouchent l'horizon et
+   * n'ont presque rien à gagner à onduler en Z — on les voit de loin, leur
+   * relief se confondrait avec celui des nappes devant. L'avant-garde, elle,
+   * est celle qu'on longe et qui vous avale : c'est là que le front doit se
+   * lire comme une côte découpée et non comme une ligne.
+   *
+   * `soft` a été resserré sur les deux nappes avant. La 0.7 y perdait la crête
+   * dans le dégradé alpha : un frémissement de 0,6 unité noyé dans cinq unités
+   * de fondu. Une crête qui bouge de trois unités demande un fondu plus court
+   * qu'elle, sinon elle n'existe pas à l'écran.
+   */
   const FOG_LAYERS = [
     // Fond : la plus haute, presque opaque — c'est elle qui bouche l'horizon.
-    { z: 30, crestY: 27, soft: 13, baseAlpha: 0.86, crest: 0.17,
-      edge: 0.08, streak: 0.07, drift: 0.55, order: 3, floor: 0 },
-    { z: 14, crestY: 21, soft: 10, baseAlpha: 0.94, crest: 0.25,
-      edge: 0.16, streak: 0.10, drift: -0.85, order: 4, floor: 0 },
+    { z: 30, crestY: 27, soft: 12, baseAlpha: 0.86, crest: 0.20,
+      edge: 0.08, streak: 0.07, drift: 0.55, order: 3, floor: 0, depth: 2.5 },
+    { z: 14, crestY: 21, soft: 9, baseAlpha: 0.94, crest: 0.30,
+      edge: 0.16, streak: 0.10, drift: -0.85, order: 4, floor: 0, depth: 4.0 },
     // Corps : le mur proprement dit, opaque au niveau des yeux. Lui reste
     // enterré : c'est lui qui doit couvrir les creux du terrain.
-    { z: 0, crestY: 15, soft: 8, baseAlpha: 1.00, crest: 0.33,
-      edge: 0.30, streak: 0.12, drift: 1.00, order: 5, floor: -CONFIG.fog.sink },
+    { z: 0, crestY: 15, soft: 5.5, baseAlpha: 1.00, crest: 0.42,
+      edge: 0.24, streak: 0.13, drift: 1.00, order: 5, floor: -CONFIG.fog.sink,
+      depth: 6.0 },
     // Avant-garde : basse et translucide. Elle déborde vers le joueur, avale
     // les objets progressivement au lieu de les couper net, et donne au front
     // une bordure claire lisible même quand le mur remplit l'écran.
-    { z: -8, crestY: 7, soft: 5, baseAlpha: 0.55, crest: 0.46,
-      edge: 0.62, streak: 0.16, drift: -1.35, order: 6, floor: -CONFIG.fog.sink }
+    // `edge` et `baseAlpha` ont été baissés en 0.7.1 après capture du plan de
+    // révélation : à soixante unités et caméra basse, cette nappe passait
+    // DEVANT le corps sombre du mur et le lavait entièrement. La Brume se
+    // lisait comme une nappe d'eau pâle. Elle doit être une masse sombre à
+    // liseré clair, pas l'inverse.
+    { z: -8, crestY: 7, soft: 3.2, baseAlpha: 0.40, crest: 0.62,
+      edge: 0.40, streak: 0.18, drift: -1.35, order: 6, floor: -CONFIG.fog.sink,
+      depth: 9.0 }
   ];
 
   const fogLayers = FOG_LAYERS.map((spec, index) => {
@@ -585,7 +656,8 @@ export function createFogNomad(ctx) {
         phase: index * 1.9,
         edgeStrength: spec.edge,
         streak: spec.streak,
-        floor: spec.floor
+        floor: spec.floor,
+        depth: spec.depth
       }),
       // Un matériau par nappe : leur opacité doit pouvoir varier
       // indépendamment quand l'une d'elles passe devant l'objectif.
@@ -789,6 +861,10 @@ export function createFogNomad(ctx) {
     flashUntil: 0,
     collecting: null,
     collectProgress: 0,
+    // Ressource à portée, en attente d'une décision du joueur. Elle n'entre
+    // JAMAIS dans le sac toute seule — voir updateCollection().
+    candidate: null,
+    candidateType: null,
     sinceSprint: 0,
     wasFarLateral: false
   };
@@ -849,6 +925,8 @@ export function createFogNomad(ctx) {
     state.flashUntil = 0;
     state.collecting = null;
     state.collectProgress = 0;
+    state.candidate = null;
+    state.candidateType = null;
     state.sinceSprint = 0;
     state.wasFarLateral = false;
     updateBagVisual();
@@ -956,6 +1034,10 @@ export function createFogNomad(ctx) {
 
   function removeResource(mesh) {
     activeResources.delete(mesh);
+    // Une cible armée qui disparaît — ramassée, avalée par la brume, évacuée
+    // avec son chunk — doit cesser d'être proposée, sinon le bouton reste à
+    // l'écran et n'agit sur rien.
+    if (state.candidate === mesh) { state.candidate = null; state.candidateType = null; }
     if (mesh.parent) mesh.parent.remove(mesh);
 
     const list = chunkResources.get(mesh.userData.resource.chunkKey);
@@ -1234,6 +1316,47 @@ export function createFogNomad(ctx) {
     }
   }
 
+  /**
+   * LE PROLOGUE A SA PROPRE COURBE DE PRESSION.
+   *
+   * La courbe de `fogSpeedAt()` est calibrée pour une RUN, dont le propos est
+   * de finir par se terminer : elle passe de 5,2 à 8,2 u/s, c'est-à-dire
+   * au-dessus de la marche à vide, et c'est voulu — sans cela un joueur qui ne
+   * ramasse rien n'est jamais rattrapé.
+   *
+   * Le propos du prologue est l'inverse. Mesuré sur la 0.7 : un parcours normal
+   * y allumait QUARANTE feux, un feu toutes les dix-sept secondes. Le feu avait
+   * cessé d'être un répit pour devenir une respiration obligatoire.
+   *
+   * Le profil du prologue est donc calé sur la vitesse d'un joueur léger qui
+   * va tout droit — 6,2 u/s à vide. La Brume l'accompagne au lieu de le
+   * dépasser, et ce sont ses CHOIX qui creusent l'écart : chaque arrêt pour
+   * ramasser coûte 0,6 s à 32 % de vitesse, chaque détour coûte sa distance,
+   * chaque kilo coûte de la vitesse. Le feu redevient ce qu'il doit être —
+   * ce qu'on fait quand on a trop pris.
+   *
+   * Trois profils attendus, et c'est ce que le banc mesure :
+   *   va tout droit, ne ramasse rien   → 0 à 2 feux
+   *   marche et ramasse un peu         → 1 à 3 feux
+   *   se détourne beaucoup             → 2 à 5 feux
+   *
+   * Passé `PROLOGUE_COMPLETE`, la courbe normale reprend, sans transition : le
+   * joueur entre dans le vrai jeu avec la vraie pression.
+   */
+  const BRUME_PROLOGUE = {
+    base: 5.2,        // u/s au réveil — juste sous la marche à vide
+    gain: 1.2,        // u/s ajoutées au bout de `duree`
+    duree: 750,       // secondes : la longueur visée d'un parcours normal
+  };
+
+  let profilPrologue = false;
+
+  function vitesseBrume(elapsed) {
+    if (!profilPrologue) return fogSpeedAt(elapsed);
+    const b = BRUME_PROLOGUE;
+    return b.base + b.gain * Math.min(1, elapsed / b.duree);
+  }
+
   function updateFires(delta) {
     let anyActive = false;
 
@@ -1340,7 +1463,7 @@ export function createFogNomad(ctx) {
 
     // --- brume ---
     // Un feu allumé la ralentit fortement, mais ne l'arrête jamais.
-    const speed = fogSpeedAt(state.elapsed) *
+    const speed = vitesseBrume(state.elapsed) *
       (sheltered ? CONFIG.fire.fogSlowFactor : 1);
 
     state.fogSpeed = speed;
@@ -1415,6 +1538,24 @@ export function createFogNomad(ctx) {
     emit();
   }
 
+  /**
+   * COLLECTE VOLONTAIRE.
+   *
+   * Jusqu'à la 0.7 incluse, une ressource entrait dans le sac parce qu'on
+   * passait à côté. Mesuré sur un parcours de prologue joué d'un bout à
+   * l'autre : le joueur arrivait à 96 kg sur 100 sans avoir jamais décidé de
+   * ramasser quoi que ce soit — les ressources jonchent l'axe de fuite, et
+   * marcher tout droit suffisait à s'écraser sous la charge.
+   *
+   * C'est le contraire du cœur du jeu. Fog Nomad repose sur une phrase :
+   * « je CHOISIS de prendre ce qui pourra m'aider, et ce choix peut me
+   * ralentir. » Un ramassage automatique retire les deux moitiés de la phrase :
+   * le choix, et donc la conséquence.
+   *
+   * Désormais la proximité ARME une cible, et rien de plus. C'est le joueur qui
+   * lance la collecte, d'un geste. Le reste — durée, ralentissement, anneau de
+   * progression, abandon si l'on s'éloigne — est inchangé.
+   */
   function updateCollection(delta) {
     // La cible reste valable tant qu'elle est proche et que le sac peut la prendre.
     if (state.collecting) {
@@ -1459,10 +1600,23 @@ export function createFogNomad(ctx) {
       }
     }
 
-    if (best) {
-      state.collecting = best;
-      state.collectProgress = 0;
-    }
+    // La cible est ARMÉE, pas ramassée. C'est toute la différence.
+    state.candidate = best;
+    state.candidateType = best ? best.userData.resource.type : null;
+  }
+
+  /**
+   * Lance la collecte de la cible armée. Renvoie faux s'il n'y en a pas, ce qui
+   * est le cas normal : le bouton n'apparaît que quand il y en a une.
+   */
+  function collectCandidate() {
+    if (state.dead || !state.candidate) return false;
+    if (!activeResources.has(state.candidate)) { state.candidate = null; return false; }
+    if (!canCarry(state.candidate.userData.resource.type)) return false;
+    state.collecting = state.candidate;
+    state.collectProgress = 0;
+    emit();
+    return true;
   }
 
   function die(cause) {
@@ -1579,6 +1733,38 @@ export function createFogNomad(ctx) {
     dropOne,
     canLightFire,
     lightFire,
+    collectCandidate,
+    /** Le prologue prend et rend la main sur la courbe de pression. */
+    setProfilPrologue(actif) { profilPrologue = !!actif; },
+    /** Ce que chaque nappe porte réellement, pour ?fogtest. */
+    get fogLayers() {
+      return FOG_LAYERS.map((spec, i) => ({
+        z: spec.z, crestY: spec.crestY, crest: spec.crest, depth: spec.depth,
+        soft: spec.soft, alpha: spec.baseAlpha,
+        visible: fogLayers[i].mesh.visible,
+      }));
+    },
+    /** Masque tout sauf les nappes. C'est ce geste qui a établi, en 0.7, que
+        le « mur à crête ondulée » était trois bandes plates. */
+    isolerBrume(actif) {
+      scene.traverse((o) => {
+        if (!o.isMesh) return;
+        const estNappe = fogLayers.some((l) => l.mesh === o);
+        if (estNappe) { o.visible = true; return; }
+        if (actif) { o.userData.visibleAvant = o.visible; o.visible = false; }
+        else if (o.userData.visibleAvant !== undefined) {
+          o.visible = o.userData.visibleAvant;
+          delete o.userData.visibleAvant;
+        }
+      });
+    },
+    get enProfilPrologue() { return profilPrologue; },
+    get brumeProfil() {
+      return profilPrologue
+        ? { nom: "prologue", ...BRUME_PROLOGUE, vitesse: +vitesseBrume(state.elapsed).toFixed(2) }
+        : { nom: "run", vitesse: +fogSpeedAt(state.elapsed).toFixed(2) };
+    },
+    get candidateType() { return state.candidateType; },
     canPulse,
     usePulse,
     canEat,
@@ -1615,7 +1801,9 @@ export function createFogNomad(ctx) {
     playerZ: () => player.position.z,
     playerX: () => player.position.x,
     get fogGap() { return state.fogZ - player.position.z; },
-    get fogSpeed() { return fogSpeedAt(state.elapsed); },
+    // La vitesse RÉELLEMENT appliquée, profil du prologue compris : une sonde
+    // qui rendrait la courbe de run pendant le prologue mentirait au banc.
+    get fogSpeed() { return vitesseBrume(state.elapsed); },
     get bands() { return state.bands; },
     get resourceCount() { return activeResources.size; },
     get resourceObjects() { return [...activeResources]; },

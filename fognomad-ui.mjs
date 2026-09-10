@@ -32,6 +32,8 @@ export function bindRunUI(game) {
   const deathCause = $("#death-cause");
   const deathStats = $("#death-stats");
   const restartButton = $("#restart");
+  const pickButton = $("#pick-up");
+  const pickLabel = $("#pick-up-texte");
   const crystalButton = $("#use-crystal");
   const fireButton = $("#light-fire");
   const pickupFeed = $("#pickup-feed");
@@ -80,6 +82,11 @@ export function bindRunUI(game) {
   restartButton.addEventListener("click", () => {
     game.restart();
     death.hidden = true;
+  });
+
+  pickButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    game.collectCandidate();
   });
 
   crystalButton.addEventListener("click", (event) => {
@@ -300,6 +307,17 @@ export function bindRunUI(game) {
       collectRing.hidden = true;
     }
 
+    // Le bouton n'existe que tant qu'il y a quelque chose à prendre. Il porte
+    // le NOM de la ressource : le joueur doit pouvoir décider sans s'arrêter,
+    // et « prendre » tout court ne lui dit pas s'il ramasse sept kilos de bois
+    // ou treize de pierre.
+    const cible = state.candidate && !state.collecting ? state.candidateType : null;
+    pickButton.hidden = !cible;
+    if (cible) {
+      const spec = CONFIG.resources[cible];
+      pickLabel.textContent = spec ? spec.label.toUpperCase() : "PRENDRE";
+    }
+
     renderBag(state);
     if (sacOuvert) renderPanel(state);
 
@@ -427,7 +445,7 @@ export function bindWorldTest(renderer, lireMonde) {
  * nom d'étape mentirait sur l'état du jeu, et le premier bug qu'il masquerait
  * serait précisément celui qu'on cherchait.
  */
-export function bindPrologueTest({ prologue, game, player, etapes }) {
+export function bindPrologueTest({ prologue, game, player, etapes, renderer }) {
   const panel = document.createElement("div");
   panel.id = "prologuetest";
 
@@ -498,30 +516,136 @@ export function bindPrologueTest({ prologue, game, player, etapes }) {
   document.body.appendChild(panel);
 
   let cumul = 0;
+  let images = 0;
+  let fps = 0;
   return function updatePrologueTest(delta) {
     cumul += delta;
+    images++;
     if (cumul < 0.25) return;
+    fps = images / cumul;
     cumul = 0;
+    images = 0;
 
     const p = prologue;
     const s = game.state;
+    const info = renderer.info;
     const objectif = document.getElementById("pro-objectif-texte")?.textContent || "—";
 
+    // Ce qu'il faut pour juger une passe sans rejouer quinze minutes : où on en
+    // est, ce que la Brume fait, ce que le joueur porte, et l'état des deux
+    // scènes qui peuvent silencieusement ne pas se jouer — le condamné et le
+    // pilier. Le §T les demande nommément, et pour cause : ce sont exactement
+    // les deux qui étaient marquées PASS en 0.7 sans avoir eu lieu.
+    const cond = p.acteurs.find((a) => a.condamne);
+    const profil = game.brumeProfil;
+    const pilier = window.HORIZON?.scene.getObjectByName("prologue-pilier-ancien");
+    const traces = window.HORIZON?.scene.getObjectByName("prologue-traces");
+    const dist = (o) => o
+      ? Math.hypot(player.position.x - o.position.x, player.position.z - o.position.z).toFixed(0) + " u"
+      : "pas posé";
+
     lecture.textContent =
-      `${p.actif ? "PROLOGUE ACTIF" : "monde procédural"}   ${p.temps.toFixed(1)} s\n` +
-      `étape   ${p.etape || "—"}   (${p.franchies.length}/${etapes.length})\n` +
-      `objectif   ${objectif}\n` +
-      `brume   ${game.fogGap.toFixed(0)} u devant   (z ${s.fogZ.toFixed(0)})\n` +
-      `joueur  z ${player.position.z.toFixed(0)}   parcouru ${s.distance.toFixed(0)} u\n` +
-      `sac     ${p.sacPris ? "pris" : "au sol"}   ${s.weight.toFixed(1)} kg   ` +
-      `${s.collected} ramassée(s)   ${s.firesLit} feu(x)\n` +
-      `décor   ${p.props.length} objet(s)   acteurs ${p.acteurs.filter((a) => a.vivant).length}` +
-      `/${p.acteurs.length}`;
+      `${p.actif ? "PROLOGUE ACTIF" : "monde procédural"}   ${p.temps.toFixed(1)} s   ` +
+      `${fps.toFixed(0)} fps  ${info.render.calls} calls  ${info.render.triangles} tris\n` +
+      `étape     ${p.etape || "—"}   (${p.franchies.length}/${etapes.length})\n` +
+      `objectif  ${objectif}\n` +
+      `brume     ${game.fogGap.toFixed(0)} u devant   ${profil.vitesse} u/s   ` +
+      `profil ${profil.nom}\n` +
+      `joueur    z ${player.position.z.toFixed(0)}   parcouru ${s.distance.toFixed(0)} u   ` +
+      `${(s.weight).toFixed(0)}/${game.config.weight.max} kg\n` +
+      `sac       ${p.sacPris ? "pris" : "au sol"}   ${s.collected} ramassée(s)   ` +
+      `${s.firesLit} feu(x)   ${s.candidateType || "—"} à portée\n` +
+      `condamné  ${cond ? (cond.vivant ? "court" : "ENGLOUTI") : "pas lâché"}` +
+      `${cond ? "   z " + cond.z : ""}\n` +
+      `traces    ${dist(traces)}       pilier   ${dist(pilier)}   ` +
+      `${p.franchies.includes("CRYSTAL_INTERACTION") ? "activé" : "inerte"}\n` +
+      `décor     ${p.props.length} objet(s)   acteurs ` +
+      `${p.acteurs.filter((a) => a.vivant).length}/${p.acteurs.length}`;
 
     for (let i = 0; i < pastilles.length; i++) {
       const nom = etapes[i];
       pastilles[i].className = p.franchies.includes(nom)
         ? (nom === p.etape ? "courante" : "faite") : "";
     }
+  };
+}
+
+/**
+ * Overlay ?fogtest — regarder la Brume, pas la mesurer.
+ *
+ * `?fogtest` existait déjà et servait au panneau de performance ; il continue.
+ * Ce panneau-ci s'y AJOUTE, parce que le §U demande de pouvoir observer la
+ * Brume à plusieurs distances sans jouer quinze minutes pour y arriver, et que
+ * séparer les deux aurait créé un troisième paramètre à retenir.
+ *
+ * Il fait trois choses et pas une de plus : poser la Brume à une distance
+ * choisie, se retourner pour la regarder, et dire ce qu'on est en train de
+ * voir. La 0.7 a montré qu'un diagnostic de brume tenait entièrement dans ces
+ * trois gestes — et qu'aucun raisonnement ne les remplaçait.
+ */
+export function bindFogTest({ game, player, horizon }) {
+  const panel = document.createElement("div");
+  panel.id = "fogtest-vue";
+
+  const lecture = document.createElement("div");
+  lecture.className = "lecture";
+  panel.appendChild(lecture);
+
+  const barre = document.createElement("div");
+  barre.className = "barre";
+  panel.appendChild(barre);
+
+  // Les quatre distances qui comptent, et pourquoi.
+  //   10  elle vous mange — c'est l'image de la mort
+  //   30  c'est la distance du diagnostic 0.7, celle où le mur était plat
+  //   60  la distance de révélation du prologue (§12)
+  //  140  de loin, quand elle barre l'horizon
+  for (const d of [10, 30, 60, 140]) {
+    const b = document.createElement("button");
+    b.textContent = `${d} u`;
+    b.onclick = (e) => { e.preventDefault(); horizon.setFogGap(d); };
+    barre.appendChild(b);
+  }
+
+  const regard = document.createElement("button");
+  regard.textContent = "↻ regarder";
+  regard.title = "Se retourner vers la Brume — elle est TOUJOURS hors champ sinon";
+  regard.onclick = (e) => {
+    e.preventDefault();
+    // La caméra du jeu est dos à la Brume. Sans ce bouton, ce panneau
+    // proposerait de regarder quelque chose qu'on ne peut pas voir.
+    horizon.setYaw(Math.abs(horizon.yaw) < 1.6 ? Math.PI : 0);
+  };
+  barre.appendChild(regard);
+
+  const seules = document.createElement("button");
+  seules.textContent = "◐ nappes seules";
+  seules.title = "Masquer tout le reste : c'est ainsi qu'on a vu que le mur était plat";
+  let isole = false;
+  seules.onclick = (e) => {
+    e.preventDefault();
+    isole = !isole;
+    seules.classList.toggle("actif", isole);
+    horizon.isolerBrume(isole);
+  };
+  barre.appendChild(seules);
+
+  document.body.appendChild(panel);
+
+  let cumul = 0;
+  return function updateFogTest(delta) {
+    cumul += delta;
+    if (cumul < 0.3) return;
+    cumul = 0;
+
+    const n = game.fogLayers;
+    lecture.textContent =
+      `BRUME   ${game.fogGap.toFixed(0)} u devant   ${game.brumeProfil.vitesse} u/s   ` +
+      `profil ${game.brumeProfil.nom}\n` +
+      `caméra  lacet ${horizon.yaw.toFixed(2)}   ` +
+      `${Math.abs(Math.abs(horizon.yaw) - Math.PI) < 0.6 ? "TOURNÉE VERS LA BRUME" : "dos à la Brume"}\n` +
+      `nappes  ${n.map((l) => `${l.z >= 0 ? "+" : ""}${l.z} u`).join("  ")}\n` +
+      `relief  crête ±${n.map((l) => l.crest.toFixed(2)).join(" ")}   ` +
+      `profondeur ±${n.map((l) => l.depth.toFixed(0)).join(" ")} u`;
   };
 }

@@ -1,6 +1,6 @@
 import * as THREE from "./vendor/three/three.module.min.js";
 import { createFogNomad } from "./fognomad.mjs";
-import { bindRunUI, bindPerfOverlay, bindWorldTest, bindPrologueTest } from "./fognomad-ui.mjs";
+import { bindRunUI, bindPerfOverlay, bindWorldTest, bindPrologueTest, bindFogTest } from "./fognomad-ui.mjs";
 import { demarrerAudio, mettreAJourAudio, sons, audioDisponible } from "./audio.mjs";
 import { createWorldDirector, worldContext, WORLD } from "./worlddirector.mjs";
 import { createLiving, LIVING } from "./living.mjs";
@@ -77,8 +77,32 @@ const SKY_AVANT       = new THREE.Color(0xf0d9b4);   // −Z : l'horizon d'espoi
 const SKY_ARRIERE     = new THREE.Color(0x6a5f7d);   // +Z : déjà contaminé
 const SKY_ZENITH_BACK = new THREE.Color(0x2e2a42);
 
+/**
+ * LE CIEL (0.7.1).
+ *
+ * Il était déjà un dégradé directionnel — avant/arrière, horizon/zénith, porté
+ * par des couleurs de sommets, sans texture ni appel de rendu supplémentaire.
+ * Ce n'était donc pas « une couleur de fond ». Mais un dégradé pur n'a aucune
+ * structure : sur une capture, il se lit comme un vide teinté, et le §36
+ * demande qu'il PARTICIPE à la profondeur de la scène.
+ *
+ * La 0.7.1 lui ajoute des bandes nuageuses, dans le même attribut de couleur.
+ * Trois propriétés délibérées :
+ *
+ *   - elles sont ÉTIRÉES à l'horizontale, parce qu'un ciel bas et couvert
+ *     écrase l'horizon et que c'est ce qu'on veut faire sentir ;
+ *   - elles sont PLUS DENSES vers l'arrière, du côté de la Brume : le ciel
+ *     s'épaissit là où le monde meurt, et s'ouvre devant. C'est la seule chose
+ *     que ce jeu dise jamais d'une direction sans écrire un mot ;
+ *   - elles sont FAIBLES en amplitude. Un ciel bavard volerait la vedette au
+ *     mur de brume, qui est le sujet.
+ *
+ * Le dôme passe de 32 × 14 à 48 × 20 segments — 1 920 triangles au lieu de
+ * 896 — parce qu'une bande portée par des sommets ne peut pas être plus fine
+ * que la maille qui la porte.
+ */
 const skyDome = (() => {
-  const geometry = new THREE.SphereGeometry(1, 32, 14, 0, Math.PI * 2, 0, Math.PI * 0.55);
+  const geometry = new THREE.SphereGeometry(1, 48, 20, 0, Math.PI * 2, 0, Math.PI * 0.55);
   const position = geometry.attributes.position;
   const colors = new Float32Array(position.count * 3);
   const bas = new THREE.Color();
@@ -102,9 +126,28 @@ const skyDome = (() => {
     const t = Math.pow(y, 0.62);
     tint.copy(bas).lerp(haut, t);
 
-    colors[i * 3] = tint.r;
-    colors[i * 3 + 1] = tint.g;
-    colors[i * 3 + 2] = tint.b;
+    // --- bandes nuageuses -------------------------------------------------
+    // Trois ondes sur l'élévation, de périodes incommensurables, modulées
+    // très lentement par l'azimut : c'est cette modulation qui empêche les
+    // bandes d'être des anneaux parfaits autour du joueur.
+    const azimut = Math.atan2(position.getX(i), z);
+    const bandes =
+      Math.sin(y * 13.5 + azimut * 0.8) * 0.5 +
+      Math.sin(y * 7.1 - azimut * 0.5) * 0.32 +
+      Math.sin(y * 23.0 + azimut * 1.4) * 0.18;
+
+    // Elles s'éteignent au zénith et juste au ras de l'horizon : au sommet il
+    // n'y a rien à raconter, et au ras du sol elles se battraient avec la
+    // crête de la brume.
+    const enveloppe = Math.sin(Math.min(1, t * 1.15) * Math.PI);
+
+    // Deux fois plus marquées derrière que devant.
+    const force = 0.055 * enveloppe * (0.55 + doux * 0.9);
+    const k = 1 + bandes * force;
+
+    colors[i * 3] = tint.r * k;
+    colors[i * 3 + 1] = tint.g * k;
+    colors[i * 3 + 2] = tint.b * k;
   }
 
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -152,6 +195,10 @@ const PARAMS = new URLSearchParams(location.search);
 const DIAG = PARAMS.has("diag");
 const WORLDTEST = PARAMS.has("worldtest");
 const PROLOGUETEST = PARAMS.has("prologuetest");
+/* ?introtest — rejouer la seule ouverture. Le §V la demande parce qu'itérer sur
+   la révélation coûtait quinze minutes de prologue à chaque essai : le
+   prologue s'arrête de lui-même dès que « FUIS » est donné, et se relance. */
+const INTROTEST = PARAMS.has("introtest");
 const FOGTEST = PARAMS.has("fogtest") || DIAG || WORLDTEST;
 /* Le prologue est l'ouverture normale du jeu. Les modes de mesure le sautent :
    ils testent le monde procédural, pas la mise en scène, et une ouverture de
@@ -2955,6 +3002,7 @@ function animate() {
   if (updatePerf) updatePerf(reel);
   if (updateWorldTest) updateWorldTest(reel);
   if (updatePrologueTest) updatePrologueTest(reel);
+  if (updateFogTest) updateFogTest(reel);
 
   renderer.render(scene, camera);
 
@@ -3038,14 +3086,44 @@ const prologue = createPrologue({
      l'objectif et personne ne le voit. */
   lireLacet: () => cameraYaw,
   poserLacet: (y) => { cameraYaw = y; },
+  /* L'inclinaison, pour le même plan et pour la même raison. La caméra de jeu
+     est haute et regarde le sol : c'est bon pour se déplacer, et c'est
+     exactement ce qui laissait le mur de brume au ras du bord supérieur de
+     l'image au moment où il aurait dû remplir le cadre. */
+  lireInclinaison: () => cameraPitch,
+  poserInclinaison: (v) => { cameraPitch = clampPitch(v); },
+  INCLINAISON_BASSE: CAMERA_PITCH_MIN + 0.02,
 });
 
 // Panneau de conduite du prologue (§47). Il n'est ni construit ni relevé sans
 // le paramètre : un prologue de dix minutes ne se vérifie pas en le rejouant
 // onze fois pour atteindre la douzième étape.
-const updatePrologueTest = PROLOGUETEST
-  ? bindPrologueTest({ prologue, game, player, etapes: ETAPES_PROLOGUE })
+/* Panneau visuel de la Brume (§U). Il s'ajoute au panneau de performance de
+   ?fogtest au lieu de le remplacer : les deux répondent à des questions
+   différentes — « combien ça coûte » et « à quoi ça ressemble ». */
+const updateFogTest = FOGTEST
+  ? bindFogTest({ game, player, horizon: { get yaw() { return cameraYaw; },
+      setYaw: (y) => { cameraYaw = y; },
+      setFogGap: (g) => game.setFogZ(player.position.z + g),
+      isolerBrume: (a) => game.isolerBrume(a) } })
   : null;
+
+const updatePrologueTest = PROLOGUETEST
+  ? bindPrologueTest({ prologue, game, player, etapes: ETAPES_PROLOGUE, renderer })
+  : null;
+
+if (INTROTEST) {
+  /* On surveille l'étape plutôt que d'instrumenter le prologue : le §V demande
+     de rejouer l'ouverture, pas d'en écrire une seconde version qui divergerait
+     de celle que le joueur reçoit. */
+  let relanceA = 0;
+  setInterval(() => {
+    if (!prologue.actif) return;
+    if (!prologue.franchies.includes("RUN_OBJECTIVE")) { relanceA = 0; return; }
+    if (!relanceA) relanceA = performance.now();
+    else if (performance.now() - relanceA > 4000) { relanceA = 0; prologue.demarrer(); }
+  }, 500);
+}
 
 if (!SANS_PROLOGUE) {
   // La tour du prologue est bâtie de pièces du décor : on attend leur arrivée

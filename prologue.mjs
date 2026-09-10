@@ -93,15 +93,20 @@ export const SCENE = {
   // Deux allongements successifs, chacun mesuré :
   //   760 u  → 2 min 46 s   (course continue, pas de gestion du poids)
   //   1 700 u → 6 min 23 s  (marche, feu répété, sac vidé)
-  //   3 100 u → visé 11 à 12 min, sur une vitesse effective mesurée de
-  //             4,43 unités par seconde d'ouverture comprise.
+  //   3 100 u → 11 min 30 s en 0.7, mais avec un joueur écrasé de 96 kg qu'il
+  //             n'avait pas choisi de porter.
+  //
+  // La 0.7.1 rend la collecte volontaire et donne au prologue sa propre courbe
+  // de pression. Le joueur reste léger, donc rapide : les mêmes 3 100 unités
+  // sont retombées à 9 min 37 s. La géographie est donc rallongée une dernière
+  // fois, de 11 %, pour revenir dans la fenêtre du §2.
   //
   // Pas davantage. Au-delà, la marche entre deux scènes cesse d'être de la
   // tension pour devenir du remplissage, et un prologue court et dense vaut
   // mieux qu'un prologue long et vide.
-  traces:      { z: -1050 },            // le convoi est passé par là
-  pilier:      { z: -2550 },            // la structure ancienne
-  fin:         { z: -3100 },            // au-delà : monde procédural pur
+  traces:      { z: -1150 },            // le convoi est passé par là
+  pilier:      { z: -2800 },            // la structure ancienne
+  fin:         { z: -3450 },            // au-delà : monde procédural pur
 
   rayonSac: 3.2,
   // Les ornières font 22 unités de long et le camp s'étale autour : « trouver
@@ -137,8 +142,15 @@ const REPLIQUES = {
   brumeVue:   "Elle est déjà là.",
   ordre:      "FUIS",
   premiere:   "Du bois. Les gestes reviennent avant le reste.",
-  craft:      "Bois et pierre. De quoi tenir un moment.",
+  pierre:     "Une pierre. Elle tient la chaleur.",
+  // LA SEULE LIGNE DU JEU QUI RESSEMBLE À UN TUTORIEL, et elle n'arrive
+  // qu'après que le joueur ait tenu les deux choses dans son sac. Le §23
+  // demande que le monde enseigne : il n'enseigne rien s'il donne la réponse
+  // avant la question.
+  craft:      "Deux bois, une pierre. De quoi faire du feu.",
+  feuUtile:   "Le feu la retient. Pas longtemps.",
   feu:        "Elle ralentit. Elle ne s'arrête pas.",
+  poidsRappel: "Le sac tire. Chaque pierre se paie en distance.",
   traces:     "Des ornières. Ils sont passés récemment.",
   convoi:     "Ils ont continué. Ils ne pouvaient pas attendre.",
   souvenir:   "…la tour qui bouge. Une voix qui crie mon nom.",
@@ -169,7 +181,10 @@ export function createPrologue(deps) {
   const {
     THREE, scene, camera, player, game, decors, living,
     terrainHeight, contaminable, sons, degagerZone = () => {},
-    lireLacet = () => 0, poserLacet = () => {}, log = () => {},
+    lireLacet = () => 0, poserLacet = () => {},
+    lireInclinaison = () => 0.5, poserInclinaison = () => {},
+    INCLINAISON_BASSE = 0.14,
+    log = () => {},
   } = deps;
 
   // ───────────────────────────────────────────────────────────────────────
@@ -188,6 +203,28 @@ export function createPrologue(deps) {
    *
    * Renvoie vrai quand le cap est atteint.
    */
+  /**
+   * Fait DESCENDRE la caméra vers l'horizon, et l'y garde le temps du plan.
+   *
+   * La caméra de jeu est haute — inclinaison 0,5 — et regarde le sol devant le
+   * joueur : c'est juste pour se déplacer, et c'est faux pour regarder un mur.
+   * Vérifié par capture au moment exact de la révélation : la Brume, à soixante
+   * unités, tenait dans une bande de cent pixels tout en haut de l'image, sous
+   * une pente d'herbe qui occupait les deux tiers du cadre. Le §12 demande
+   * qu'elle soit RÉVÉLÉE ; elle était visible, ce qui n'est pas la même chose.
+   *
+   * À 0,14, la caméra passe presque à hauteur d'homme et le mur remplit le
+   * haut du cadre. Elle remonte quand le joueur reprend la main.
+   */
+  function viserInclinaison(cible, delta, vitesse = 0.55) {
+    const actuel = lireInclinaison();
+    const ecart = cible - actuel;
+    const pas = vitesse * delta;
+    if (Math.abs(ecart) <= pas) { poserInclinaison(cible); return true; }
+    poserInclinaison(actuel + Math.sign(ecart) * pas);
+    return false;
+  }
+
   function viserLacet(cible, delta, vitesse = 1.9) {
     const actuel = lireLacet();
     let ecart = (cible - actuel + Math.PI) % (Math.PI * 2) - Math.PI;
@@ -221,6 +258,7 @@ export function createPrologue(deps) {
   let depuisEtape = 0;
   let sacPris = false;
   let poidsDit = false;         // la leçon du poids ne se donne qu'une fois
+  let pierreDite = false;       // deuxième temps de la leçon du feu
   let tracesPosees = false;     // les deux scènes lointaines sont posées
   let pilierPose = false;       // quand le joueur approche, pas au démarrage
   let piedsAncrage = null;      // z du joueur au réveil
@@ -228,6 +266,7 @@ export function createPrologue(deps) {
   let fogFige = null;           // brume tenue pendant le réveil
   let plafondBrume = 0;         // sa valeur d'origine, pour borner la dérive
   let lacetDepart = 0;          // le cap de la caméra avant le plan du regard
+  let inclinaisonDepart = 0.5;  // et son inclinaison, à rendre après
   let reactionRestante = 0;     // secondes de brume ralentie
 
   const horodatage = {};        // étape -> secondes, pour mesurer les parcours
@@ -576,7 +615,8 @@ export function createPrologue(deps) {
     objet.rotation.y = cap;
     scene.add(objet);
 
-    const acteur = { objet, type, vitesse, cap, condamne, pas: 0, vivant: true };
+    const acteur = { objet, type, vitesse, cap, condamne, pas: 0,
+                     vivant: true, englouti: false };
     acteurs.push(acteur);
     return acteur;
   }
@@ -602,13 +642,24 @@ export function createPrologue(deps) {
       // « être rattrapé » veut dire.
       if (a.condamne && a.objet.position.z > fogZ - 2.5) {
         a.vivant = false;
+        // ENGLOUTI, et c'est un état DISTINCT de « plus vivant ».
+        //
+        // En 0.7 les deux se confondaient : la règle « trop loin devant » plus
+        // bas mettait `vivant` à faux quand l'acteur sortait du champ, et la
+        // vérification « le condamné a bien disparu » passait au vert sur ce
+        // drapeau-là. Elle a été verte pendant toute la 0.7 sans que la Brume
+        // ait jamais touché personne — elle ne le pouvait pas, il courait plus
+        // vite qu'elle et s'en éloignait.
+        //
+        // Un seul chemin met ce drapeau-ci : celui où le front l'a rejoint.
+        a.englouti = true;
         a.objet.visible = false;
         try { sons.disparition?.(); } catch { /* jamais bloquant */ }
         dire("…", { duree: 2.4 });
         franchir("FOG_REVEALED");
       }
 
-      // Trop loin devant : il sort de l'histoire.
+      // Trop loin devant : il sort de l'histoire. Ce n'est PAS être englouti.
       if (a.objet.position.z < player.position.z - 220) a.vivant = false;
     }
   }
@@ -680,6 +731,7 @@ export function createPrologue(deps) {
     acteurs.length = 0;
     document.body.classList.remove("pro-fige");
     poserLacet(lacetDepart);
+    poserInclinaison(inclinaisonDepart);
     if (voile) { voile.hidden = true; voile.className = ""; }
     if (replique) { replique.hidden = true; replique.classList.remove("visible", "ordre"); }
     if (boutonAction) boutonAction.hidden = true;
@@ -699,12 +751,14 @@ export function createPrologue(deps) {
     temps = 0; depuisEtape = 0;
     sacPris = false;
     poidsDit = false;
+    pierreDite = false;
     tracesPosees = false;
     pilierPose = false;
     reactionRestante = 0;
     piedsAncrage = player.position.z;
     piedsAncrageX = player.position.x;
     lacetDepart = lireLacet();
+    inclinaisonDepart = lireInclinaison();
     cibleSac = { x: piedsAncrageX + SCENE.sac.x, z: piedsAncrage + SCENE.sac.z };
 
     // Le sac est vide : il est par terre. Le joueur n'a rien sur le dos.
@@ -714,6 +768,11 @@ export function createPrologue(deps) {
     document.body.classList.add("pro-fige");
     if (voile) { voile.hidden = false; voile.className = ""; }
     monterDecor();
+
+    // La Brume du prologue accompagne le joueur au lieu de le dépasser. Voir
+    // BRUME_PROLOGUE dans fognomad.mjs : la 0.7 demandait quarante feux pour
+    // traverser, ce qui avait cessé d'être un répit.
+    game.setProfilPrologue?.(true);
 
     // La Brume est tenue en place pendant le réveil : on ne meurt pas dans une
     // cinématique d'ouverture.
@@ -730,6 +789,9 @@ export function createPrologue(deps) {
     franchir("PROLOGUE_COMPLETE");
     actif = false;
     demonter();
+    // La vraie pression reprend, sans transition. Le joueur entre dans le jeu
+    // avec la courbe du jeu.
+    game.setProfilPrologue?.(false);
     log(`Prologue — terminé (${raison}). Le monde procédural reprend la main.`);
   }
 
@@ -857,6 +919,7 @@ export function createPrologue(deps) {
     if (depuisEtape > 1.2) {
       document.body.classList.add("pro-fige");
       viserLacet(lacetDepart + Math.PI, delta);
+      viserInclinaison(INCLINAISON_BASSE, delta);
     }
 
     if (depuisEtape > 1.6 && !acteurs.length) {
@@ -897,6 +960,7 @@ export function createPrologue(deps) {
   // un ordre, c'est un sous-titre.
   function sequenceOrdre(delta) {
     const enPlace = viserLacet(lacetDepart, delta, 2.6);
+    viserInclinaison(inclinaisonDepart, delta, 0.7);
     if (enPlace && depuisEtape > 1.2) {
       document.body.classList.remove("pro-fige");
       dire(REPLIQUES.ordre, { duree: 2.6, ordre: true });
@@ -923,19 +987,37 @@ export function createPrologue(deps) {
       dire(REPLIQUES.poids, { duree: 5 });
     }
 
+    // --- LA LEÇON DU FEU, en trois temps et dans l'ordre -------------------
+    //
+    // Le §23 demande : le joueur découvre le bois, puis la pierre, et SEULEMENT
+    // ENSUITE le jeu indique discrètement la recette. Trois répliques, chacune
+    // déclenchée par un fait, aucune par une minuterie.
     if (!franchies.has("FIRST_RESOURCE") && game.state.collected > 0) {
       dire(REPLIQUES.premiere, { duree: 3.6 });
       franchir("FIRST_RESOURCE");
     }
 
+    // Le deuxième temps : la pierre. Il n'a pas d'étape à lui — les quinze
+    // points de contrôle sont fixés — mais il a sa phrase, parce que c'est le
+    // moment où le joueur tient les deux moitiés de la recette sans le savoir.
+    if (!pierreDite && (game.state.inventory.pierre || 0) > 0
+        && franchies.has("FIRST_RESOURCE")) {
+      pierreDite = true;
+      dire(REPLIQUES.pierre, { duree: 3.4 });
+    }
+
     if (!franchies.has("FIRST_CRAFT_AVAILABLE") && game.canLightFire()) {
-      dire(REPLIQUES.craft, { duree: 4 });
+      dire(REPLIQUES.craft, { duree: 4.6 });
       franchir("FIRST_CRAFT_AVAILABLE");
     }
 
     if (!franchies.has("FIRST_FIRE") && game.state.firesLit > 0) {
       dire(REPLIQUES.feu, { duree: 4 });
       franchir("FIRST_FIRE");
+      // Le §23 demande que le joueur SENTE ce que le feu vient de lui acheter.
+      // La phrase arrive après coup, quand l'écart s'est déjà creusé sous ses
+      // yeux — dire « ça marche » avant que ça se voie n'apprend rien.
+      setTimeout(() => { if (actif) dire(REPLIQUES.feuUtile, { duree: 3.6 }); }, 4200);
     }
 
     // --- traces du convoi ---
@@ -1010,7 +1092,8 @@ export function createPrologue(deps) {
     get props() { return props.map((p) => p.name); },
     get acteurs() {
       return acteurs.map((a) => ({ type: a.type, vivant: a.vivant,
-        condamne: a.condamne, z: +a.objet.position.z.toFixed(1) }));
+        condamne: a.condamne, englouti: a.englouti,
+        z: +a.objet.position.z.toFixed(1) }));
     },
     /** Déclenche la structure ancienne sans attendre l'approche, pour
         ?prologuetest. C'est la MÊME fonction que le bouton du jeu appelle :
@@ -1037,6 +1120,7 @@ export function createPrologue(deps) {
       if (i >= ETAPES.indexOf("RUN_OBJECTIVE")) {
         fogFige = null;
         poserLacet(lacetDepart);   // sauter le plan du regard ne doit pas
+        poserInclinaison(inclinaisonDepart);
         document.body.classList.remove("pro-fige");   // laisser la caméra retournée
         voile.classList.add("clair");
         poserObjectif(franchies.has("MAIN_OBJECTIVE_REVEALED")

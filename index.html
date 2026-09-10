@@ -50,7 +50,14 @@
 
     <div id="bag-list" aria-label="Contenu du sac"></div>
 
+    <!-- Le ramassage est VOLONTAIRE depuis la 0.7.1 : la proximité arme une
+         cible, ce bouton la prend. Il vit avec les autres actions, du côté du
+         pouce, parce qu'on le presse en marchant. -->
     <div id="powers">
+      <button id="pick-up" type="button" hidden>
+        <span class="glyph">✚</span>
+        <span class="txt" id="pick-up-texte">PRENDRE</span>
+      </button>
       <button id="use-crystal" type="button" hidden>
         <span class="glyph">◆</span>
         <span class="txt">REPOUSSER</span>

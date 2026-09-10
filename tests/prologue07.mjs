@@ -48,7 +48,8 @@ function ok(nom, cond, detail = "") {
 function installerPilote(profil) {
   return (p) => {
     const H = window.HORIZON;
-    const journal = { fauteDeSac: 0, ressourcesVisees: 0, feux: 0, morts: 0, boutons: [] };
+    const journal = { fauteDeSac: 0, ressourcesVisees: 0, ramasses: 0, feux: 0,
+                      morts: 0, boutons: [] };
     let arret = false;
     let cible = null;          // ressource visée, en exploration
     let pauseJusqua = 0;
@@ -59,6 +60,22 @@ function installerPilote(profil) {
     let boutonVuA = 0;
 
     function directionVersFuite() { return { x: 0, z: -1 }; }
+
+    /**
+     * Ce que ce profil veut réellement dans son sac.
+     *
+     * Le prologue part avec un bois et une pierre ; la recette du feu en coûte
+     * deux et une. Un joueur qui a compris garde de quoi faire quelques feux et
+     * laisse le reste par terre — c'est exactement le choix que la 0.7.1 rend
+     * possible, et un pilote qui ramasserait tout le rendrait invisible.
+     */
+    function veutPrendre(etat, type) {
+      if (!type) return false;
+      const n = etat.inventory[type] || 0;
+      if (type === "cristal") return p.garde && n < 2;
+      const voulu = p.reserve[type] || 0;
+      return n < voulu;
+    }
 
     function commander(wx, wz) {
       const n = Math.hypot(wx, wz) || 1;
@@ -133,7 +150,19 @@ function installerPilote(profil) {
       //
       // Un pilote qui n'allume qu'un feu ne mesure pas un joueur qui a compris
       // le jeu ; il mesure un joueur qui ne s'en est pas servi.
-      if (p.feu && H.canLightFire && (H.fogGap < p.seuilFeu || charge > 0.45)) {
+      // UNIQUEMENT quand la marge serre.
+      //
+      // La 0.7.1 avait d'abord gardé la clause « ou le sac est lourd » héritée
+      // de la 0.7, où brûler était la seule façon rentable de s'alléger. Avec
+      // la collecte volontaire elle n'a plus lieu d'être — et elle a produit
+      // une mesure absurde : la réserve visée du profil normal pesait 54 kg,
+      // c'est-à-dire au-dessus de son propre seuil de 45 %, donc le pilote
+      // allumait un feu à la seconde où il en avait de quoi. 51 feux mesurés,
+      // pire que les 40 de la 0.7 — et pas une seule de ces flambées ne disait
+      // quoi que ce soit du jeu.
+      //
+      // Un joueur qui n'est pas menacé ne brûle pas son bois : il le pose.
+      if (p.feu && H.canLightFire && H.fogGap < p.seuilFeu) {
         if (H.lightFire()) { journal.feux++; pauseJusqua = t + 0.8; return; }
       }
 
@@ -169,7 +198,26 @@ function installerPilote(profil) {
         if (jete) H.drop(jete);
       }
 
-      // --- détour vers une ressource ---
+      // --- DÉTOUR ET RAMASSAGE VOLONTAIRE ----------------------------------
+      //
+      // Depuis la 0.7.1, se tenir à côté d'une ressource ne la met plus dans le
+      // sac : la proximité arme une cible, et il faut APPUYER. Le pilote fait
+      // donc les deux gestes d'un joueur — aller jusqu'à l'objet, puis décider
+      // de le prendre — et un banc qui se contenterait de marcher dessus ne
+      // ramasserait plus rien du tout.
+      //
+      // Il ne prend d'ailleurs pas tout ce qu'il croise : chaque profil a une
+      // distance de détour et un besoin. Un pilote qui ramasse par réflexe ne
+      // mesure pas un joueur, il mesure un aspirateur.
+      const btnPrendre = document.getElementById("pick-up");
+      if (btnPrendre && !btnPrendre.hidden && p.prend
+          && veutPrendre(etat, H.game.candidateType)) {
+        journal.ramasses++;
+        btnPrendre.click();
+        H.move(0, 0);
+        return;
+      }
+
       if (p.detour > 0 && charge < 0.45) {
         if (cible) {
           const d = Math.hypot(H.pos.x - cible.x, H.pos.z - cible.z);
@@ -178,7 +226,7 @@ function installerPilote(profil) {
             (r) => Math.abs(r.x - cible.x) < 0.01 && Math.abs(r.z - cible.z) < 0.01);
           if (!encore || d > p.detour * 2.2) cible = null;
           else if (d > 1.1) { commander(cible.x - H.pos.x, cible.z - H.pos.z); H.setRun(false); return; }
-          else { H.move(0, 0); return; }   // à l'arrêt : la collecte se fait seule
+          else { H.move(0, 0); return; }   // à portée : le bouton fait le reste
         }
         if (!cible) {
           let best = null, bd = p.detour;
@@ -186,6 +234,7 @@ function installerPilote(profil) {
             // Jamais en arrière : un joueur qui revient sur ses pas devant la
             // Brume ne joue pas, il se suicide.
             if (r.z > H.pos.z - 1) continue;
+            if (!veutPrendre(etat, r.type)) continue;
             const d = Math.hypot(r.x - H.pos.x, r.z - H.pos.z);
             if (d < bd) { bd = d; best = r; }
           }
@@ -237,11 +286,16 @@ const PROFILS = {
   // résultat est conservé et rapporté comme tel, mais le PROFIL, lui, mesure
   // désormais un joueur qui ne se détourne pas et qui fait du feu quand la
   // Brume serre.
-  rapide:      { court: true,  detour: 0,  feu: true,  seuilCourse: 1e9, garde: false, seuilFeu: 45 },
-  normal:      { court: false, detour: 9,  feu: true,  seuilCourse: 90,  garde: false, seuilFeu: 55 },
+  // « Rapide » : il sait où il va, il ne se détourne pas, mais il prend ce qui
+  // est littéralement sur son chemin et garde de quoi faire un feu si ça serre.
+  rapide:      { court: true,  detour: 4,  feu: true, prend: true, seuilCourse: 1e9,
+                 garde: false, seuilFeu: 40, reserve: { bois: 2, pierre: 1 } },   // 27 kg
+  normal:      { court: false, detour: 10, feu: true, prend: true, seuilCourse: 90,
+                 garde: false, seuilFeu: 55, reserve: { bois: 3, pierre: 1 } },   // 34 kg
   // Seul le profil « exploration » garde ses cristaux : c'est ce qui le
   // distingue, et c'est aussi ce qui le ralentit.
-  exploration: { court: false, detour: 26, feu: true,  seuilCourse: 70,  garde: true, seuilFeu: 65 },
+  exploration: { court: false, detour: 26, feu: true, prend: true, seuilCourse: 70,
+                 garde: true, seuilFeu: 65, reserve: { bois: 4, pierre: 2 } },    // 54 kg
 };
 // La charge maximale vient du moteur, pas d'une constante recopiée ici : c'est
 // la valeur que le jeu utilise réellement pour ralentir le joueur.
@@ -351,6 +405,13 @@ async function jouer(nom, profil, { observer = false } = {}) {
     ramassees: window.HORIZON.game.collected,
     feux: window.HORIZON.game.firesLit,
     poids: window.HORIZON.game.weight,
+    poidsMax: window.HORIZON.game.maxWeight,
+    // La marge de brume vécue pendant tout le parcours. Un nombre de feux ne
+    // dit rien sans elle : trois feux avec une marge qui ne descend jamais
+    // sous 200 n'est pas le même jeu que trois feux à dix unités du mur.
+    margeMin: Math.round(window.HORIZON.game.minFogGap),
+    margeMax: Math.round(window.HORIZON.game.maxFogGap),
+    margeMoy: Math.round(window.HORIZON.game.gapSum / Math.max(1, window.HORIZON.game.gapSamples)),
     journal: window.PILOTE?.journal || null,
     // Le monde procédural doit avoir repris la main : plus un seul objet du
     // prologue en scène, et des chunks toujours vivants.
@@ -416,11 +477,34 @@ for (const e of ETAPES) {
      t === undefined ? "jamais franchie" : `${t} s`);
 }
 
-const ordre = ETAPES.filter((e) => normal.franchies.includes(e));
-const chrono = ordre.map((e) => normal.horodatage[e]);
-ok("étapes: franchies dans l'ordre du scénario",
+/* L'ORDRE PORTE SUR LA COLONNE VERTÉBRALE, PAS SUR TOUT.
+ *
+ * Les étapes 7 à 9 — première ressource, premier craft possible, premier feu —
+ * ne dépendent d'aucune distance : elles s'ouvrent sur ce que le joueur FAIT.
+ * Un joueur dont la marge tient n'a aucune raison d'allumer un feu avant
+ * d'arriver aux traces du convoi, et c'est très bien : le §P dit explicitement
+ * que la chronologie n'est pas un rail.
+ *
+ * Mesuré : FIRST_FIRE à 367 s, CONVOY_TRACE_FOUND à 194 s. Exiger l'ordre
+ * complet aurait transformé une liberté voulue en échec.
+ *
+ * Ce qui doit rester dans l'ordre, c'est la mise en scène : on ne prend pas son
+ * sac avant de se réveiller, on ne voit pas la Brume avant de la chercher, on
+ * n'active pas le pilier avant de l'avoir trouvé. */
+const COLONNE = ["PROLOGUE_START", "PLAYER_WAKE", "BAG_VISIBLE", "BAG_PICKED_UP",
+  "FOG_REVEALED", "RUN_OBJECTIVE", "CONVOY_TRACE_FOUND", "MAIN_OBJECTIVE_REVEALED",
+  "ANCIENT_STRUCTURE_FOUND", "CRYSTAL_INTERACTION", "FOG_REACTION", "PROLOGUE_COMPLETE"];
+const LIBRES = ["FIRST_RESOURCE", "FIRST_CRAFT_AVAILABLE", "FIRST_FIRE"];
+
+const chrono = COLONNE.filter((e) => normal.franchies.includes(e))
+  .map((e) => normal.horodatage[e]);
+ok("étapes: la colonne vertébrale est franchie dans l'ordre",
    chrono.every((t, i) => i === 0 || t >= chrono[i - 1]),
    chrono.join(" → "));
+ok("étapes: la première ressource précède le premier craft, qui précède le feu",
+   normal.horodatage.FIRST_RESOURCE <= normal.horodatage.FIRST_CRAFT_AVAILABLE
+   && normal.horodatage.FIRST_CRAFT_AVAILABLE <= normal.horodatage.FIRST_FIRE,
+   LIBRES.map((e) => `${e} ${normal.horodatage[e]}`).join(" · "));
 ok("étapes: aucune étape inconnue", normal.franchies.every((e) => ETAPES.includes(e)));
 
 // --- les acteurs ----------------------------------------------------------
@@ -440,9 +524,13 @@ if (b) {
 // première version de cette vérification passait uniquement parce que le
 // parcours mourait avant la fin — un test vert pour une mauvaise raison.
 const acteursVus = b ? b.acteurs : [];
-ok("acteurs: le condamné a bien disparu",
-   acteursVus.some((a) => a.condamne && !a.vivant),
-   acteursVus.map((a) => `${a.type}${a.condamne ? "*" : ""}:${a.vivant ? "vif" : "pris"}`).join(" ")
+// ENGLOUTI, pas « plus vivant ». La 0.7 vérifiait `!vivant`, que la règle
+// « trop loin devant » mettait à faux toute seule : le test était vert alors
+// que la Brume n'avait jamais rattrapé personne.
+ok("acteurs: le condamné est réellement ENGLOUTI par la Brume",
+   acteursVus.some((a) => a.condamne && a.englouti),
+   acteursVus.map((a) => `${a.type}${a.condamne ? "*" : ""}:`
+     + (a.englouti ? "ENGLOUTI" : a.vivant ? "vif" : "parti")).join(" ")
      || "aucun acteur observé");
 
 // --- le pilier ------------------------------------------------------------
@@ -497,13 +585,15 @@ if (explo) console.log(`   ${explo.temps} s de jeu · ${explo.murSecondes} s d'h
 console.log("\n=== §30 DURÉES MESURÉES (temps de JEU) ===");
 const runs = [["rapide", rapide], ["normal", normal], ["exploration", explo]]
   .filter(([, r]) => r);
-console.log("   profil        durée      étapes   ramassées  feux  mort");
+console.log("   profil        durée      étapes   ramassées  feux  marge min/moy/max  sac max  issue");
 for (const [nom, r] of runs) {
   const mn = Math.floor(r.temps / 60), sec = Math.round(r.temps % 60);
   console.log(`   ${nom.padEnd(13)} ${String(mn).padStart(2)} min ${String(sec).padStart(2)} s`
     + `   ${String(r.franchies.length).padStart(2)}/15`
     + `   ${String(r.ramassees).padStart(6)}`
     + `   ${String(r.feux).padStart(4)}`
+    + `   marge ${String(r.margeMin).padStart(4)}/${String(r.margeMoy).padStart(4)}/${String(r.margeMax).padStart(4)}`
+    + `   sac max ${String(Math.round(r.poidsMax)).padStart(3)}`
     + `   ${r.mort ? r.cause : "—"}`);
 }
 

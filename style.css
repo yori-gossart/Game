@@ -650,6 +650,10 @@ body.dev #intro { top: 34%; }
 
 @keyframes powerIn { from { transform: scale(.7); opacity: 0; } }
 
+/* Le ramassage est neutre : ni la promesse froide du cristal, ni la chaleur du
+   feu. C'est une décision, pas une récompense — et le sac qu'on remplit est
+   aussi le sac qui ralentit. */
+#pick-up     { background: rgba(58, 60, 52, .84); box-shadow: 0 0 12px rgba(255, 255, 255, .16); }
 #use-crystal { background: rgba(30, 96, 92, .82); box-shadow: 0 0 16px rgba(99, 232, 214, .4); }
 #light-fire  { background: rgba(104, 58, 28, .84); box-shadow: 0 0 14px rgba(255, 176, 87, .32); }
 #powers button:active { transform: scale(.93); }
@@ -1098,6 +1102,7 @@ body.pro-fige #joystick,
 body.pro-fige #actions,
 body.pro-fige #open-bag,
 body.pro-fige #powers,
+body.pro-fige #pick-up,
 body.pro-fige #run-hud,
 body.pro-fige #fog-gauge,
 /* La liste du sac restait affichée pendant le plan du regard : trois pastilles
@@ -1199,3 +1204,46 @@ body.pro-fige #intro { display: none !important; }
   background: rgba(255, 210, 130, .32);
   color: #fff;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Panneau visuel de la Brume, ?fogtest (0.7.1)
+
+   Il vit en haut à droite, sous la jauge de brume : le bas de l'écran est pris
+   par le joystick et les actions, et le centre est précisément ce qu'on est en
+   train de regarder.
+   ───────────────────────────────────────────────────────────────────────── */
+#fogtest-vue {
+  position: absolute;
+  right: 8px;
+  top: 150px;
+  width: min(300px, calc(100vw - 16px));
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, .66);
+  color: rgba(255, 255, 255, .92);
+  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  z-index: 12;
+}
+
+#fogtest-vue .lecture { white-space: pre-wrap; }
+
+#fogtest-vue .barre {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+#fogtest-vue .barre button {
+  flex: 1 1 auto;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .14);
+  color: #fff;
+  font-size: 11px;
+}
+
+#fogtest-vue .barre button:active,
+#fogtest-vue .barre button.actif { background: rgba(255, 255, 255, .34); }
