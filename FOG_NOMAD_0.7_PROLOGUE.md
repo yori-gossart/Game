@@ -385,15 +385,19 @@ chronométrés en **temps de jeu**.
 
 | Profil | Durée | Étapes | Ramassées | Feux | Issue |
 | --- | --- | --- | --- | --- | --- |
-| rapide | **3 min 42 s** | 10/15 | 13 | **0** | rattrapé par la Brume |
-| normal | **11 min 30 s** | **15/15** | 150 | 40 | terminé |
+| rapide, aucun feu | **3 min 42 s** | 10/15 | 13 | **0** | rattrapé à z −1000 |
+| rapide, six feux | **7 min 57 s** | 11/15 | 47 | 6 | rattrapé à z −2439 |
+| **normal** | **11 min 30 s** | **15/15** | 150 | 40 | **terminé** |
 | exploration | **13 min 12 s** | 13/15 | 210 | 54 | terminé |
 
-**Le parcours normal tient la cible du §2 : 11 min 30 s, entre dix et quinze
-minutes, avec les quinze points de contrôle franchis dans l'ordre.** Reproduit
-deux fois à deux secondes près (690,1 s et 692,4 s sur la version précédente de
-la géographie), ce qui dit que la mesure porte sur les règles du jeu et non sur
-la cadence de la machine de test.
+**Le parcours normal tient la cible du §2 : entre dix et quinze minutes, avec
+les quinze points de contrôle franchis dans l'ordre.** Mesuré trois fois —
+690,1 s, 692,4 s et 670,9 s — soit une dispersion de 3 %. La mesure porte donc
+sur les règles du jeu et non sur la cadence de la machine de test.
+
+Seul le parcours normal est une **exigence** du banc. Les deux autres sont des
+mesures : en faire des exigences reviendrait à régler le pilote jusqu'à ce
+qu'il passe, c'est-à-dire à mesurer le pilote au lieu du jeu.
 
 Le détail des quinze étapes, sur le parcours normal :
 
@@ -406,16 +410,31 @@ Le détail des quinze étapes, sur le parcours normal :
 | `ANCIENT_STRUCTURE_FOUND` → `FOG_REACTION` | 573,2 → 573,8 s |
 | `PROLOGUE_COMPLETE` | 690,1 s |
 
-### Ce que les deux autres parcours disent, et qui n'est pas flatteur
+### Le prologue a un plancher de compétence, et il faut le dire
 
-**Le parcours rapide, dans sa première définition, meurt.** Il courait tout
-droit sans jamais rien fabriquer : rattrapé à 3 min 42 s, à mille unités du
-départ, dix étapes sur quinze. Ce n'est pas un défaut du prologue — c'est la
-règle centrale du jeu qui s'applique, et c'est même exactement ce que le
-prologue prétend enseigner. Mais cela veut dire qu'« aller vite » n'est pas une
-façon de jouer tant qu'on ne s'est pas servi du feu, et le profil a été
-redéfini en conséquence : ne pas se détourner, mais faire du feu quand la Brume
-serre.
+**Aucun parcours qui néglige le feu ne va au bout.** Sans feu du tout : mort à
+3 min 42 s. Avec six feux, allumés seulement quand la marge tombait sous 45
+unités : mort à 7 min 57 s, à six cents unités de la fin. Le parcours qui
+termine en a allumé **quarante**.
+
+Le mécanisme est connu et voulu depuis la 0.5 : passé six minutes, la Brume va
+plus vite que la marche à vide, et la seule façon de tenir la distance est de
+brûler le bois qu'on ramasse — deux bois et une pierre rendent dix-huit
+secondes de Brume au sixième de sa vitesse, soit près de quatre-vingts unités
+de marge. Le poids qu'on porte vaut de l'avance une fois posé au sol.
+
+Ce n'est donc pas un défaut d'équilibrage. Mais c'en est la conséquence
+inconfortable, et elle n'est pas dans le brief : **un joueur qui ne découvre pas
+le feu ne verra jamais la fin du prologue.** Le prologue lui dit deux choses —
+« Bois et pierre. De quoi tenir un moment. » quand le craft devient possible, et
+« Trop lourd. Il faut laisser quelque chose. » à mi-charge. Rien ne garantit que
+cela suffise. C'est la première question à poser à un testeur humain qui meurt
+vers la troisième minute : **avez-vous fait du feu ?** Si la réponse est « je ne
+savais pas que je pouvais », c'est le §22 qui a raté, pas l'équilibrage.
+
+Le profil `rapide` du banc a été redéfini en conséquence — « rapide » veut dire
+« sait où il va », pas « ne se sert de rien » —, et les deux résultats sont
+gardés dans le tableau parce qu'ils disent chacun quelque chose.
 
 **Le parcours exploration n'a franchi que 13 étapes sur 15**, tout en allant
 jusqu'au bout du parcours. Il se détourne jusqu'à 26 unités vers les

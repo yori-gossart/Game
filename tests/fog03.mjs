@@ -24,6 +24,26 @@ p.on("response", r => { if (r.status() >= 400) errors.push(`HTTP ${r.status()} $
 const R = [];
 const ok = (n, cond, d="") => { R.push({n,cond}); console.log(`${cond?"PASS":"FAIL"}  ${n}${d?"  — "+d:""}`); };
 
+
+/* Attendre une CONDITION, jamais une durée d'horloge.
+ *
+ * Ces deux blocs attendaient 1 400 ms de montre pour laisser le moteur
+ * ramasser une ressource. Sous rendu logiciel, `delta` est plafonné à 40 ms et
+ * le temps de JEU avance beaucoup moins vite que la montre : quand la machine
+ * est chargée, 1 400 ms d'horloge ne suffisent plus à couvrir la durée de
+ * collecte, rien n'est ramassé, et sept vérifications tombent en cascade — le
+ * sac vide n'a plus rien à peser ni rien à jeter.
+ *
+ * Mesuré sur trois exécutions consécutives du même code : 45/45, 38/45, 42/45.
+ * Le code ne changeait pas ; la charge de la machine, si. C'est le principe
+ * écrit dans tests/README.md, et ce fichier ne le respectait pas. */
+async function attendre(page, condition, limite = 15000) {
+  try {
+    await page.waitForFunction(condition, null, { timeout: limite });
+    return true;
+  } catch { return false; }
+}
+
 await p.goto(URL, { waitUntil: "load" });
 await p.evaluate(() => localStorage.clear());
 await p.reload({ waitUntil: "load" }); await p.waitForTimeout(2600);
@@ -158,21 +178,27 @@ ok("ressources: les rares sont plus latérales", mCristal > mPierre && mPierre >
 }
 
 console.log("\n=== COLLECTE ET POIDS ===");
-const pick = await p.evaluate(async () => {
-  const target = window.HORIZON.resourceSample.find(r => r.type === "bois");
-  if (!target) return null;
-  window.HORIZON.teleport(target.x, target.z);
-  const before = window.HORIZON.game.weight;
-  await new Promise(r => setTimeout(r, 1400));
+const cible = await p.evaluate(() => {
+  const t = window.HORIZON.resourceSample.find(r => r.type === "bois");
+  if (!t) return null;
+  window.HORIZON.teleport(t.x, t.z);
+  return { before: window.HORIZON.game.weight };
+});
+await attendre(p, () => window.HORIZON.game.collected >= 1);
+const pick = cible && await p.evaluate((before) => {
   const st = window.HORIZON.game;
   return { before, after: st.weight, collected: st.collected, inv: { ...st.inventory },
            tier: window.HORIZON.bagTier };
-});
+}, cible.before);
 ok("collecte: ramassage automatique à proximité", pick && pick.after > pick.before,
    pick ? `poids ${pick.before} -> ${pick.after}` : "aucune cible");
 ok("collecte: objet ajouté à l'inventaire", pick && pick.collected >= 1);
 
 const speeds = await p.evaluate(() => {
+  // Une collecte en cours applique son PROPRE ralentissement : lue pendant,
+  // la courbe du poids sortait à 0,147 au lieu de 0,46 et « sac vide = pleine
+  // vitesse » tombait avec elle. On lit la règle du poids seule.
+  window.HORIZON.jeu.state.collecting = null;
   const out = [];
   for (const w of [0, 25, 50, 75, 100]) {
     window.HORIZON.game.weight = w;
@@ -197,12 +223,14 @@ const tiers = await p.evaluate(() => {
 ok("sac: cinq paliers distincts", new Set(tiers).size === 5, tiers.join(" → "));
 
 console.log("\n=== JETER ===");
-const drop = await p.evaluate(async () => {
-  window.HORIZON.restartRun();
-  await new Promise(r => setTimeout(r, 300));
+await p.evaluate(() => window.HORIZON.restartRun());
+await attendre(p, () => window.HORIZON.game.collected === 0);
+await p.evaluate(() => {
   const t = window.HORIZON.resourceSample.find(r => r.type === "bois");
-  window.HORIZON.teleport(t.x, t.z);
-  await new Promise(r => setTimeout(r, 1400));
+  if (t) window.HORIZON.teleport(t.x, t.z);
+});
+await attendre(p, () => window.HORIZON.game.collected >= 1);
+const drop = await p.evaluate(() => {
   const before = window.HORIZON.game.weight;
   const chips = document.querySelectorAll(".bag-chip").length;
   const done = window.HORIZON.drop("bois");
@@ -223,7 +251,15 @@ const stam = await p.evaluate(async () => {
   await new Promise(r => setTimeout(r, 2500));
   const drained = window.HORIZON.game.stamina;
   window.HORIZON.setRun(false); window.HORIZON.move(0,0);
-  await new Promise(r => setTimeout(r, 2500));
+  // Récupération : on attend que le souffle REMONTE, pas 2 500 ms de montre.
+  // Même défaut que la collecte plus haut, et il précède la 0.7 : sous charge,
+  // 2 500 ms d'horloge ne couvrent pas assez de temps de jeu, et la
+  // vérification tombe sans que rien n'ait changé dans le moteur.
+  const cible = drained + 16;
+  const limite = Date.now() + 20000;
+  while (window.HORIZON.game.stamina < cible && Date.now() < limite) {
+    await new Promise(r => setTimeout(r, 120));
+  }
   const back = window.HORIZON.game.stamina;
   // épuisement complet
   window.HORIZON.game.stamina = 2;

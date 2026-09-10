@@ -8,14 +8,14 @@ navigateur.
 | --- | --- | --- |
 | `suite.mjs` | 32 | moteur 0.2 : démarrage, tactile, caméra, streaming de chunks, sauvegarde |
 | `audit.mjs` | 26 | audit 0.2 : mémoire, quadrants, déterminisme, NOUVEAU répété, performance |
-| `fog03.mjs` | 44 | Fog Nomad 0.3 : brume, dégâts, mort, restart, ressources, poids, sac, endurance, jeter |
-| `fog04.mjs` | 47 | Fog Nomad 0.4 : ressources sur 100 chunks, objets jetés, cristal, feu, 10 cycles mort/restart |
+| `fog03.mjs` | 45 | Fog Nomad 0.3 : brume, dégâts, mort, restart, ressources, poids, sac, endurance, jeter |
+| `fog04.mjs` | 48 | Fog Nomad 0.4 : ressources sur 100 chunks, objets jetés, cristal, feu, 10 cycles mort/restart |
 | `regressions.mjs` | 31 | défauts historiques déjà corrigés, visés par leur **mécanisme** |
 | `balance05.mjs` | 36 | Fog Nomad 0.5 : distribution des ressources, courbe de pression, bandes de marge, run longue, qualité |
 | `world05.mjs` | 19 | Living World 0.5 : distribution du directeur de monde, déterminisme, 500 chunks — **sans navigateur** |
 | `ui05.mjs` | 47 | Living World 0.5 : modes de jeu, disposition du HUD, menu de sac, ration, `?worldtest` |
 | `art06.mjs` | 35 | 0.6 / 0.6a : visibilité du banc, assets, orientation du modèle, ancrage du sac, rigidité |
-| `prologue07.mjs` | 45 | 0.7 : le prologue **joué** d'un bout à l'autre, trois profils, quinze points de contrôle |
+| `prologue07.mjs` | 44 | 0.7 : le prologue **joué** d'un bout à l'autre, trois profils, quinze points de contrôle |
 | `simulate05.mjs` | — | quatre profils de jeu simulés sur la vraie `CONFIG`, sans navigateur |
 
 ## Lancer
@@ -51,11 +51,20 @@ instanciée », qui est le mécanisme réellement identifié.
 pas sur un GPU réel : ils servent à comparer avant/après, pas à valider la
 cible mobile. Cette validation-là se fait sur appareil, avec `?fogtest`.
 
-**Une règle apprise trois fois.** `delta` est plafonné à 40 ms par image : sous
-rendu logiciel, le temps de JEU avance moins vite que l'horloge murale. Toute
-assertion écrite en secondes réelles ou en « au moins N unités » finit par
+**Une règle apprise quatre fois.** `delta` est plafonné à 40 ms par image :
+sous rendu logiciel, le temps de JEU avance moins vite que l'horloge murale.
+Toute assertion écrite en secondes réelles ou en « au moins N unités » finit par
 mesurer la cadence de la machine de test plutôt que la règle du jeu. On mesure
 donc en temps de jeu (`state.elapsed`), ou on attend la condition.
+
+La quatrième fois, c'était `fog03.mjs`, qui laissait 1 400 ms de montre au
+moteur pour ramasser une ressource. Trois exécutions consécutives du même code,
+sous charge : **45/45, 38/45, 42/45**. Rien n'avait changé dans le jeu. Quand la
+collecte ne se faisait pas, sept vérifications tombaient en cascade — un sac
+vide n'a plus rien à peser ni rien à jeter, et la courbe du poids sortait à
+0,147 au lieu de 0,46 parce qu'une collecte en cours applique son propre
+ralentissement. Ces attentes sont maintenant des attentes de CONDITION, et la
+suite est revenue à 45/45.
 
 **Une suite à la fois.** Sous SwiftShader, deux suites lancées en parallèle se
 disputent le processeur : des attentes calibrées expirent, et une douzaine de
