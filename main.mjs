@@ -78,31 +78,37 @@ const SKY_ARRIERE     = new THREE.Color(0x6a5f7d);   // +Z : déjà contaminé
 const SKY_ZENITH_BACK = new THREE.Color(0x2e2a42);
 
 /**
- * LE CIEL (0.7.1).
+ * LE CIEL — et pourquoi la 0.7.1 n'y a rien laissé.
  *
- * Il était déjà un dégradé directionnel — avant/arrière, horizon/zénith, porté
- * par des couleurs de sommets, sans texture ni appel de rendu supplémentaire.
- * Ce n'était donc pas « une couleur de fond ». Mais un dégradé pur n'a aucune
- * structure : sur une capture, il se lit comme un vide teinté, et le §36
- * demande qu'il PARTICIPE à la profondeur de la scène.
+ * Il est un dégradé directionnel — avant/arrière, horizon/zénith — porté par
+ * des couleurs de sommets, sans texture ni appel de rendu supplémentaire. Ce
+ * n'est donc pas « une couleur de fond », contrairement à ce que le §36
+ * craignait. Mais un dégradé pur n'a aucune structure.
  *
- * La 0.7.1 lui ajoute des bandes nuageuses, dans le même attribut de couleur.
- * Trois propriétés délibérées :
+ * DES BANDES NUAGEUSES ONT ÉTÉ ÉCRITES, PUIS RETIRÉES. Elles vivaient dans le
+ * même attribut de couleur, coûtaient 1 024 triangles de maillage
+ * supplémentaire, et n'étaient PAS VISIBLES. Trois essais, vérifiés à chaque
+ * fois en isolant le dôme à l'écran :
  *
- *   - elles sont ÉTIRÉES à l'horizontale, parce qu'un ciel bas et couvert
- *     écrase l'horizon et que c'est ce qu'on veut faire sentir ;
- *   - elles sont PLUS DENSES vers l'arrière, du côté de la Brume : le ciel
- *     s'épaissit là où le monde meurt, et s'ouvre devant. C'est la seule chose
- *     que ce jeu dise jamais d'une direction sans écrire un mot ;
- *   - elles sont FAIBLES en amplitude. Un ciel bavard volerait la vedette au
- *     mur de brume, qui est le sujet.
+ *   amplitude 5,5 %   ciel parfaitement lisse
+ *   amplitude 17 %    ciel parfaitement lisse
+ *   enveloppe déplacée juste au-dessus de l'horizon, là où l'inclinaison de
+ *   caméra bornée à 0,12 laisse réellement voir le ciel — lisse encore.
  *
- * Le dôme passe de 32 × 14 à 48 × 20 segments — 1 920 triangles au lieu de
- * 896 — parce qu'une bande portée par des sommets ne peut pas être plus fine
- * que la maille qui la porte.
+ * La cause n'a pas été trouvée, et c'est la raison honnête de ce retrait : on
+ * ne livre pas un coût de rendu pour un changement qu'on ne voit pas. C'est
+ * exactement l'erreur que la 0.7 avait commise sur la crête de la brume, et
+ * elle avait été retirée pour la même raison.
+ *
+ * Ce qu'il faudra regarder ensuite : la portion de ciel réellement visible en
+ * portrait est une bande très mince juste au-dessus de l'horizon, et elle est
+ * en grande partie recouverte par la brume et la végétation lointaine. Il est
+ * possible qu'aucune structure portée par le DÔME ne puisse s'y voir, et que
+ * le §36 demande en réalité de travailler la lumière et la profondeur
+ * atmosphérique plutôt que le ciel lui-même.
  */
 const skyDome = (() => {
-  const geometry = new THREE.SphereGeometry(1, 48, 20, 0, Math.PI * 2, 0, Math.PI * 0.55);
+  const geometry = new THREE.SphereGeometry(1, 32, 14, 0, Math.PI * 2, 0, Math.PI * 0.55);
   const position = geometry.attributes.position;
   const colors = new Float32Array(position.count * 3);
   const bas = new THREE.Color();
@@ -126,28 +132,9 @@ const skyDome = (() => {
     const t = Math.pow(y, 0.62);
     tint.copy(bas).lerp(haut, t);
 
-    // --- bandes nuageuses -------------------------------------------------
-    // Trois ondes sur l'élévation, de périodes incommensurables, modulées
-    // très lentement par l'azimut : c'est cette modulation qui empêche les
-    // bandes d'être des anneaux parfaits autour du joueur.
-    const azimut = Math.atan2(position.getX(i), z);
-    const bandes =
-      Math.sin(y * 13.5 + azimut * 0.8) * 0.5 +
-      Math.sin(y * 7.1 - azimut * 0.5) * 0.32 +
-      Math.sin(y * 23.0 + azimut * 1.4) * 0.18;
-
-    // Elles s'éteignent au zénith et juste au ras de l'horizon : au sommet il
-    // n'y a rien à raconter, et au ras du sol elles se battraient avec la
-    // crête de la brume.
-    const enveloppe = Math.sin(Math.min(1, t * 1.15) * Math.PI);
-
-    // Deux fois plus marquées derrière que devant.
-    const force = 0.055 * enveloppe * (0.55 + doux * 0.9);
-    const k = 1 + bandes * force;
-
-    colors[i * 3] = tint.r * k;
-    colors[i * 3 + 1] = tint.g * k;
-    colors[i * 3 + 2] = tint.b * k;
+    colors[i * 3] = tint.r;
+    colors[i * 3 + 1] = tint.g;
+    colors[i * 3 + 2] = tint.b;
   }
 
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));

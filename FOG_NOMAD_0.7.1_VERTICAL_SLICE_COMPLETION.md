@@ -228,23 +228,40 @@ et qu'une image tranche.
 
 ---
 
-## 9. Le ciel
+## 9. Le ciel : écrit, vérifié, RETIRÉ
 
 Il était déjà un dégradé directionnel porté par des couleurs de sommets — pas
-« une couleur de fond ». Mais un dégradé pur n'a aucune structure, et le §36
-demande qu'il participe à la profondeur.
+« une couleur de fond », contrairement à ce que le §36 craignait. Mais un
+dégradé pur n'a aucune structure.
 
-La 0.7.1 lui ajoute des bandes nuageuses, dans le même attribut de couleur,
-sans texture ni appel de rendu supplémentaire. Trois propriétés délibérées :
+Des bandes nuageuses ont été écrites : dans le même attribut de couleur, sans
+texture, avec un dôme passé de 32 × 14 à 48 × 20 segments. **Elles ne se voient
+pas.** Vérifié trois fois, en isolant le dôme à l'écran :
 
-- **étirées à l'horizontale**, parce qu'un ciel bas écrase l'horizon ;
-- **plus denses vers l'arrière**, du côté de la Brume — le ciel s'épaissit là où
-  le monde meurt et s'ouvre devant. C'est la seule chose que ce jeu dise jamais
-  d'une direction sans écrire un mot ;
-- **faibles en amplitude**, parce qu'un ciel bavard volerait la vedette au mur.
+| Essai | Résultat |
+| --- | --- |
+| amplitude 5,5 % | ciel parfaitement lisse |
+| amplitude 17 % | ciel parfaitement lisse |
+| enveloppe déplacée juste au-dessus de l'horizon | lisse encore |
 
-Le dôme passe de 32 × 14 à 48 × 20 segments : une bande portée par des sommets
-ne peut pas être plus fine que la maille qui la porte.
+Le troisième essai visait un diagnostic précis : l'inclinaison de caméra est
+bornée à 0,12, donc la caméra regarde toujours un peu vers le bas, et la seule
+portion de ciel jamais visible est une bande mince juste au-dessus de
+l'horizon — là où la première enveloppe valait zéro. Corrigé, cela n'a rien
+changé non plus.
+
+**Tout a donc été retiré**, y compris les 1 024 triangles. On ne livre pas un
+coût de rendu pour un changement qu'on ne voit pas : c'est exactement l'erreur
+que la 0.7 avait commise sur la crête de la brume, et elle avait été retirée
+pour la même raison.
+
+Ce qu'il faudra regarder ensuite est consigné dans le code : la bande de ciel
+réellement visible en portrait est très mince et largement recouverte par la
+brume et la végétation lointaine. Il est possible qu'aucune structure portée
+par le dôme ne puisse s'y voir, et que le §36 demande en réalité de travailler
+la lumière et la profondeur atmosphérique plutôt que le ciel lui-même.
+
+**Verdict : FAIBLE.** Rien de visible n'a été gagné.
 
 ---
 
@@ -286,13 +303,13 @@ ajoute de façon déterministe :
 | | avant | après | delta |
 | --- | --- | --- | --- |
 | Nappes de brume (4 × plan) | 26 × 7 | 112 × 8 | **+5 712 triangles** |
-| Dôme de ciel | 32 × 14 | 48 × 20 | **+1 024 triangles** |
-| **Total** | | | **+6 736 triangles, 0 appel de rendu** |
+| Dôme de ciel | 32 × 14 | *inchangé* | **0** — voir §9, retiré |
+| **Total** | | | **+5 712 triangles, 0 appel de rendu** |
 
 Le relief de profondeur des nappes coûte **zéro** : il déplace des sommets qui
 existaient déjà.
 
-Sur un budget que le brief fixe entre 50 et 100 k triangles, +6 736 est
+Sur un budget que le brief fixe entre 50 et 100 k triangles, +5 712 est
 acceptable. Mais c'est une affirmation sur un budget, pas sur un téléphone.
 
 **Les images par seconde relevées ici ne valent rien.** Le rendu est logiciel :
@@ -317,6 +334,7 @@ Il vaut mieux le dire que le maquiller.
 | --- | --- | --- |
 | §F4 front déchiqueté | **PARTIEL** | les crêtes sont courbes et déphasées, la profondeur casse le rectangle, mais le front reste fait de grandes arches douces |
 | §I terrain local | **NON FAIT** | aucune passe locale sur le relief, le chemin, le sol autour des dix premières minutes |
+| §J ciel | **RETIRÉ** | écrit, vérifié invisible trois fois, retiré avec son coût — voir §9 |
 | §K tour-balise | **INCHANGÉE** depuis la 0.7 | elle raconte déjà la chute — quatre piliers en deux étages, un manquant, plateforme, cristal tournant, pilier couché, traînée de débris — mais elle n'a pas été retravaillée |
 | §M animaux | **PROVISOIRE** | aucun pack CC0 d'animaux atteignable, voir `ASSET_LICENSES.md` |
 | §N audio | **PARTIEL** | tout le paysage sonore demandé existe déjà et est synthétisé — voir ci-dessous — mais rien n'a été ajouté ni retravaillé en 0.7.1 |
