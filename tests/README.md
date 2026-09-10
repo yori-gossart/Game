@@ -15,7 +15,7 @@ navigateur.
 | `world05.mjs` | 19 | Living World 0.5 : distribution du directeur de monde, déterminisme, 500 chunks — **sans navigateur** |
 | `ui05.mjs` | 47 | Living World 0.5 : modes de jeu, disposition du HUD, menu de sac, ration, `?worldtest` |
 | `art06.mjs` | 35 | 0.6 / 0.6a : visibilité du banc, assets, orientation du modèle, ancrage du sac, rigidité |
-| `prologue07.mjs` | 44 | 0.7 : le prologue **joué** d'un bout à l'autre, trois profils, quinze points de contrôle |
+| `prologue07.mjs` | 45-48 | 0.7 : le prologue **joué** d'un bout à l'autre, trois profils, quinze points de contrôle — le total dépend du nombre de profils joués (`PROFILS=`) |
 | `simulate05.mjs` | — | quatre profils de jeu simulés sur la vraie `CONFIG`, sans navigateur |
 
 ## Lancer
