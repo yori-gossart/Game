@@ -29,7 +29,9 @@ Trois paramètres d'URL existent, et servent à des choses différentes :
 | Paramètre | Ce qu'il fait |
 | --- | --- |
 | *(aucun)* | le jeu tel qu'un joueur le reçoit — **c'est le test principal** |
-| `?prologuetest` | ajoute le panneau de conduite : état, sauts d'étape, relance |
+| `?prologuetest` | panneau de conduite : état, sauts d'étape, relance, condamné, pilier |
+| `?fogtest` | performance, **et** observation de la Brume à 10 / 30 / 60 / 140 unités |
+| `?introtest` | rejoue l'ouverture en boucle, sans refaire douze minutes |
 | `?sansprologue` | démarre directement dans le monde procédural |
 
 ---
@@ -68,6 +70,7 @@ qu'il laisse ne se corrige plus ensuite.
 | 2.4 | Après | le sac **est sur le dos du personnage**, à sa place, pas sur sa tête |
 | 2.5 | L'inventaire | ouvrir le sac : il contient **1 bois, 1 pierre, 1 ration** |
 | 2.6 | Le feu | à cet instant, le feu n'est **pas encore** possible — il manque un bois |
+| 2.7 | La caméra | pendant la révélation elle **descend** vers l'horizon, puis remonte |
 
 > **2.6 est délibéré.** Un sac qui contient déjà la recette donne la réponse
 > avant la question. Il faut avoir ramassé quelque chose pour que le feu
@@ -102,10 +105,12 @@ jouant. Si une de ces lignes demande une explication, c'est un défaut à noter.
 
 | # | À vérifier | Attendu |
 | --- | --- | --- |
-| 4.1 | Ramasser | on ramasse **sans qu'on nous l'ait expliqué**, en s'arrêtant à côté |
+| 4.1 | Ramasser | approcher une ressource fait apparaître un **bouton portant son nom** |
+| 4.1b | Ne PAS ramasser | rester à côté sans appuyer ne met **rien** dans le sac |
 | 4.2 | Le poids | le sac **grossit** visiblement à mesure qu'il se remplit |
 | 4.3 | Le poids, suite | on **sent** qu'on ralentit — avant de lire un chiffre |
-| 4.4 | Le feu | dès qu'on a deux bois et une pierre, l'action devient possible |
+| 4.4 | La recette | elle n'est dite qu'**après** avoir tenu du bois PUIS une pierre |
+| 4.4b | Le feu | dès qu'on a deux bois et une pierre, l'action devient possible |
 | 4.5 | Ce que le feu fait | la Brume **ralentit** — elle ne s'arrête pas |
 | 4.6 | Le souffle | la course s'épuise, et se récupère près du feu |
 
@@ -230,8 +235,24 @@ exactement celui qu'on cherchait.
 
 ```bash
 npx http-server -p 8123 -c-1 .
-node tests/prologue07.mjs
+node tests/prologue07.mjs             # les trois parcours, ~90 min d'horloge
+PROFILS=normal node tests/prologue07.mjs   # un seul, pour itérer
+node tests/prologue_negatifs.mjs      # les REFUS — voir ci-dessous
 ```
+
+### Les tests négatifs
+
+`tests/prologue_negatifs.mjs` ne vérifie pas que le jeu marche : il vérifie
+qu'il **refuse**. Il existe à cause d'une leçon précise — en 0.7, la
+vérification « le condamné a bien disparu » était verte alors que la Brume
+n'avait jamais rattrapé personne.
+
+Chaque contrôle met le jeu dans un état où une étape NE DOIT PAS se franchir, et
+échoue si elle se franchit : le sac hors de portée, une ressource sur laquelle
+on se tient sans appuyer, le pilier à soixante-dix unités, les traces à
+quatre-vingts, la Brume repoussée à six cents unités. Et chacun vérifie ensuite
+que **le refus n'est pas une panne** — un contrôle qui refuse toujours ne prouve
+rien non plus.
 
 Il **joue** le prologue trois fois, avec un pilote installé dans la page qui
 tient le joystick, se dirige, s'arrête sur les ressources et appuie sur les
@@ -250,15 +271,18 @@ Trois profils, parce qu'un seul chiffre ne dit rien d'une durée de jeu :
 | `normal` | marche, ramasse ce qui est sur son chemin, brûle son bois | **11 min 30 s**, 15/15 |
 | `exploration` | se détourne jusqu'à 26 unités, garde ses cristaux | **13 min 12 s**, 13/15 |
 
-Un quatrième résultat, gardé parce qu'il dit quelque chose : un pilote qui court
-tout droit **sans jamais allumer de feu** est rattrapé à **3 min 42 s**, à mille
-unités du départ, dix étapes sur quinze. Ce n'est pas un défaut du prologue,
-c'est la règle centrale du jeu — et c'est précisément ce que le prologue
-prétend enseigner.
+**Combien de feux faut-il ?** C'était la question centrale de la 0.7.1. En 0.7,
+un parcours normal en allumait **quarante** — un toutes les dix-sept secondes.
+La cible est désormais 1 à 3 pour un parcours normal, 0 à 2 pour un joueur
+rapide, 2 à 5 pour un explorateur prudent.
 
-Si un testeur humain meurt vers la troisième minute, la première question à lui
-poser est donc : **avez-vous fait du feu ?** Si la réponse est « je ne savais
-pas que je pouvais », c'est le §22 qui a raté, pas l'équilibrage.
+Si un testeur humain en allume beaucoup plus, ce n'est pas le feu qu'il faut
+regarder : c'est son **sac**. Un joueur lourd est un joueur lent, et un joueur
+lent brûle pour survivre.
+
+Et s'il meurt vers la troisième minute, la première question à lui poser reste :
+**avez-vous fait du feu ?** Si la réponse est « je ne savais pas que je
+pouvais », c'est le §C3 qui a raté, pas l'équilibrage.
 
 Les trois arrêtent de ramasser au-delà de 55 % de charge. Ce n'est pas une
 commodité : à cette charge le joueur marche moins vite que la Brume n'avance,

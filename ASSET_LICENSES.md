@@ -104,7 +104,7 @@ dans `audio.mjs`, sans aucun fichier — décision de la 0.5, conservée.
 
 ---
 
-## 4. Le prologue (0.7) n'ajoute aucun asset externe
+## 4. Le prologue (0.7 et 0.7.1) n'ajoute aucun asset externe
 
 Une version qui met en scène une tour-balise, un pilier ancien, des ornières de
 convoi et deux cristaux lumineux est exactement le genre de version où un
@@ -128,6 +128,20 @@ git diff --stat <version précédente>..HEAD -- assets/
 ```
 
 Il doit ne rien renvoyer.
+
+### 0.7.1 : toujours rien
+
+La 0.7.1 travaille la Brume, le ciel, la caméra, l'économie du feu et la
+collecte. Tout cela est de la géométrie et des couleurs de sommets calculées
+dans le code — aucune texture, aucun modèle, aucun fichier audio.
+
+**ANIMAL ASSET LIMITATION.** Les animaux restent les silhouettes procédurales de
+`living.mjs`. `kenney.nl`, `quaternius.com`, `poly.pizza`, `opengameart.org` et
+`itch.io` sont refusés par la politique réseau de l'environnement de
+développement — mesuré, pas supposé. KayKit, seul auteur atteignable, ne publie
+aucun pack d'animaux. La règle du projet interdit d'utiliser un asset dont la
+licence n'a pas été lue chez son auteur : ils restent donc provisoires, et c'est
+rapporté comme tel plutôt que contourné.
 
 ---
 

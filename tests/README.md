@@ -1,6 +1,6 @@
 # Tests
 
-Huit suites exécutées sur Chromium en émulation Pixel 7 avec entrées tactiles,
+Neuf suites exécutées sur Chromium en émulation Pixel 7 avec entrées tactiles,
 une suite qui tourne en Node pur, plus un simulateur d'équilibrage sans
 navigateur.
 
@@ -16,6 +16,7 @@ navigateur.
 | `ui05.mjs` | 47 | Living World 0.5 : modes de jeu, disposition du HUD, menu de sac, ration, `?worldtest` |
 | `art06.mjs` | 35 | 0.6 / 0.6a : visibilité du banc, assets, orientation du modèle, ancrage du sac, rigidité |
 | `prologue07.mjs` | 45-48 | 0.7 : le prologue **joué** d'un bout à l'autre, trois profils, quinze points de contrôle — le total dépend du nombre de profils joués (`PROFILS=`) |
+| `prologue_negatifs.mjs` | 22 | 0.7.1 : les **refus** — ce que le jeu ne doit PAS laisser franchir |
 | `simulate05.mjs` | — | quatre profils de jeu simulés sur la vraie `CONFIG`, sans navigateur |
 
 ## Lancer
@@ -30,8 +31,9 @@ node tests/regressions.mjs
 node tests/balance05.mjs
 node tests/ui05.mjs
 node tests/art06.mjs
-node tests/prologue07.mjs               # les trois parcours : ~40 min d'horloge
+node tests/prologue07.mjs               # les trois parcours : ~90 min d'horloge
 PROFILS=normal node tests/prologue07.mjs   # un seul parcours, pour itérer
+node tests/prologue_negatifs.mjs        # les refus
 node tests/world05.mjs         # pas de navigateur, exécution directe
 node tests/simulate05.mjs      # pas de navigateur, exécution directe
 ```
@@ -99,6 +101,17 @@ jeu : une condition de sortie qui valait `NaN` et empêchait le prologue de se
 terminer, un kit de départ identique à la recette du feu qui mettait deux beats
 dans le désordre, et un joueur tué par un sac qu'il n'avait jamais choisi de
 remplir. Voir `FOG_NOMAD_0.7_PROLOGUE.md`, §7.
+
+**Un test qui ne peut pas échouer ne prouve rien.** `prologue_negatifs.mjs`
+existe entièrement à cause d'une vérification verte pour la mauvaise raison. En
+0.7, « le condamné a bien disparu » passait parce que l'acteur sortait du champ
+et qu'une règle « trop loin devant » mettait son drapeau `vivant` à faux — la
+Brume ne l'avait jamais touché, elle ne le pouvait pas. Trois parcours complets
+ont été nécessaires pour s'en apercevoir.
+
+Chaque contrôle de ce fichier met le jeu dans un état où une étape NE DOIT PAS
+se franchir. Et chacun vérifie ensuite que **le refus n'est pas une panne** :
+un contrôle qui refuse toujours ne prouve rien non plus.
 
 **`simulate05.mjs` ne prouve pas que le jeu est intéressant.** Un modèle
 n'hésite pas, ne se lasse pas, ne change pas d'avis. Il sert à détecter un

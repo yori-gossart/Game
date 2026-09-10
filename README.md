@@ -1,11 +1,15 @@
-# Fog Nomad — Prologue 0.7
+# Fog Nomad — Prologue 0.7.1
 
 Prototype de jeu mobile bâti sur le moteur **Horizon 0.2**. Un monde beau et
 mourant, une brume qui le dévore derrière vous, et un sac qui vous ralentit
 d'autant plus que vous avez été avide.
 
-- Version courante — **le prologue** : une ouverture mise en scène qui s'efface
-  quand elle a fini de parler : **`FOG_NOMAD_0.7_PROLOGUE.md`**
+- Version courante — achèvement de la tranche verticale : collecte volontaire,
+  économie du feu, passe sur la Brume :
+  **`FOG_NOMAD_0.7.1_VERTICAL_SLICE_COMPLETION.md`**
+- Incident de déploiement et sa réparation : **`DEPLOYMENT_RECOVERY_0.7.1.md`**
+- Le prologue : une ouverture mise en scène qui s'efface quand elle a fini de
+  parler : **`FOG_NOMAD_0.7_PROLOGUE.md`**
 - Comment le juger sur un téléphone : **`PROLOGUE_TEST_PLAN.md`**
 - Correctif joueur et audit honnête de l'art pass : **`FOG_NOMAD_0.6A_PLAYER_FIX.md`**
 - Direction artistique et assets réels : **`ART_DIRECTION_0.6.md`**, **`ASSET_LICENSES.md`**
@@ -55,8 +59,18 @@ de contrôle franchis dans l'ordre. Treize minutes pour qui fouille. Et trois
 minutes quarante pour qui court tout droit sans jamais faire de feu : celui-là
 se fait rattraper, et c'est la leçon.
 
-`?sansprologue` démarre directement dans le monde procédural.
-`?prologuetest` ajoute un panneau de conduite — voir `PROLOGUE_TEST_PLAN.md`.
+Sa Brume a sa propre courbe : elle accompagne un joueur léger au lieu de le
+dépasser, et ce sont vos détours qui creusent l'écart. La vraie pression — celle
+qui finit toujours par vous rattraper — reprend à la fin du prologue.
+
+| Paramètre | Ce qu'il fait |
+| --- | --- |
+| `?sansprologue` | démarre directement dans le monde procédural |
+| `?prologuetest` | panneau de conduite du prologue |
+| `?fogtest` | performance, et observation de la Brume à quatre distances |
+| `?introtest` | rejoue l'ouverture en boucle |
+
+Voir `PROLOGUE_TEST_PLAN.md`.
 
 ## Le jeu
 
@@ -66,6 +80,11 @@ Trois ressources jonchent le monde : le **bois** est sur l'axe de fuite, la
 **pierre** un peu de côté, le **cristal** nettement à l'écart. Plus une
 ressource est précieuse, plus le détour est long — et la brume ne s'arrête pas
 pendant ce temps.
+
+**Rien n'entre dans le sac tout seul.** S'approcher d'une ressource fait
+apparaître un bouton qui porte son nom ; c'est vous qui décidez. Le jeu tient en
+une phrase — je choisis de prendre ce qui pourra m'aider, et ce choix peut me
+ralentir — et un ramassage automatique en retirerait les deux moitiés.
 
 Une quatrième existe, mais ne pousse nulle part : la **ration** se trouve dans
 les abris, un sur trois. C'est le seul moyen de récupérer des points de vie.
