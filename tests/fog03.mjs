@@ -2,7 +2,14 @@ import { chromium, devices, CHROME, GL_ARGS } from "./_pw.mjs";
 import { mkdirSync } from "node:fs";
 const OUT = process.env.SHOT_DIR || "./.shots";
 mkdirSync(OUT, { recursive: true });
-const URL = process.env.URL || "http://127.0.0.1:8123/index.html";
+/* Le prologue est désormais l'ouverture par défaut du jeu. Cette suite mesure
+   le MOTEUR et la RUN, pas la mise en scène : une ouverture de quarante
+   secondes pendant laquelle le joueur est immobile, la Brume tenue en place et
+   l'inventaire vidé fausserait chacune de ses mesures. `?sansprologue` démarre
+   directement dans le monde procédural — c'est précisément ce pour quoi ce
+   paramètre existe. L'ouverture, elle, est couverte par `prologue07.mjs`, qui
+   la joue. */
+const URL = process.env.URL || "http://127.0.0.1:8123/index.html?sansprologue";
 
 const b = await chromium.launch({ executablePath: CHROME,
   args: GL_ARGS });

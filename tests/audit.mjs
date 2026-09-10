@@ -8,7 +8,14 @@ const errors = [];
 p.on("pageerror", e => errors.push("PAGEERROR: " + e.message));
 p.on("console", m => { if (m.type()==="error") errors.push("CONSOLE: "+m.text());
                        if (m.type()==="warning") errors.push("WARN: "+m.text()); });
-await p.goto("http://127.0.0.1:8123/index.html", { waitUntil: "load" });
+/* Le prologue est désormais l'ouverture par défaut du jeu. Cette suite mesure
+   le MOTEUR et la RUN, pas la mise en scène : une ouverture de quarante
+   secondes pendant laquelle le joueur est immobile, la Brume tenue en place et
+   l'inventaire vidé fausserait chacune de ses mesures. `?sansprologue` démarre
+   directement dans le monde procédural — c'est précisément ce pour quoi ce
+   paramètre existe. L'ouverture, elle, est couverte par `prologue07.mjs`, qui
+   la joue. */
+await p.goto("http://127.0.0.1:8123/index.html?sansprologue", { waitUntil: "load" });
 await p.evaluate(() => localStorage.clear());
 await p.reload({ waitUntil: "load" });
 await p.waitForTimeout(2500);

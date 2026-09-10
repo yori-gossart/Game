@@ -1100,6 +1100,11 @@ body.pro-fige #open-bag,
 body.pro-fige #powers,
 body.pro-fige #run-hud,
 body.pro-fige #fog-gauge,
+/* La liste du sac restait affichée pendant le plan du regard : trois pastilles
+   « Bois ×1 · Pierre ×1 · Ration ×1 » posées en travers de la seule scène du
+   prologue où il n'y a rien à lire. Vu sur capture, pas déduit. */
+body.pro-fige #bag-list,
+body.pro-fige #pickup-feed,
 body.pro-fige #intro { display: none !important; }
 
 /* ─────────────────────────────────────────────────────────────────────────

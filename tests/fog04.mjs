@@ -14,7 +14,14 @@
  */
 import { chromium, devices, CHROME, GL_ARGS } from "./_pw.mjs";
 
-const URL = process.env.FOG_URL || "http://127.0.0.1:8123/index.html";
+/* Le prologue est désormais l'ouverture par défaut du jeu. Cette suite mesure
+   le MOTEUR et la RUN, pas la mise en scène : une ouverture de quarante
+   secondes pendant laquelle le joueur est immobile, la Brume tenue en place et
+   l'inventaire vidé fausserait chacune de ses mesures. `?sansprologue` démarre
+   directement dans le monde procédural — c'est précisément ce pour quoi ce
+   paramètre existe. L'ouverture, elle, est couverte par `prologue07.mjs`, qui
+   la joue. */
+const URL = process.env.FOG_URL || "http://127.0.0.1:8123/index.html?sansprologue";
 
 let pass = 0, fail = 0;
 const failures = [];

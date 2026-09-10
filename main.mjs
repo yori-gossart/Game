@@ -3031,6 +3031,13 @@ const updateWorldTest = WORLDTEST ? bindWorldTest(renderer, recenserMonde) : nul
 const prologue = createPrologue({
   THREE, scene, camera, player, game, decors, living,
   terrainHeight, contaminable, sons, degagerZone, log: noterAsset,
+  /* Le prologue a besoin de FAIRE REGARDER le joueur derrière lui : la caméra
+     est posée en +Z, dos à la direction de fuite, et le mur de brume est donc
+     hors champ tant qu'on ne se retourne pas. Sans cela le plan central du
+     prologue — la Brume révélée, la silhouette rattrapée — se joue derrière
+     l'objectif et personne ne le voit. */
+  lireLacet: () => cameraYaw,
+  poserLacet: (y) => { cameraYaw = y; },
 });
 
 // Panneau de conduite du prologue (§47). Il n'est ni construit ni relevé sans

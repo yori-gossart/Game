@@ -10,7 +10,7 @@ navigateur.
 | `audit.mjs` | 26 | audit 0.2 : mémoire, quadrants, déterminisme, NOUVEAU répété, performance |
 | `fog03.mjs` | 44 | Fog Nomad 0.3 : brume, dégâts, mort, restart, ressources, poids, sac, endurance, jeter |
 | `fog04.mjs` | 47 | Fog Nomad 0.4 : ressources sur 100 chunks, objets jetés, cristal, feu, 10 cycles mort/restart |
-| `regressions.mjs` | 28 | défauts historiques déjà corrigés, visés par leur **mécanisme** |
+| `regressions.mjs` | 31 | défauts historiques déjà corrigés, visés par leur **mécanisme** |
 | `balance05.mjs` | 36 | Fog Nomad 0.5 : distribution des ressources, courbe de pression, bandes de marge, run longue, qualité |
 | `world05.mjs` | 19 | Living World 0.5 : distribution du directeur de monde, déterminisme, 500 chunks — **sans navigateur** |
 | `ui05.mjs` | 47 | Living World 0.5 : modes de jeu, disposition du HUD, menu de sac, ration, `?worldtest` |
@@ -68,6 +68,15 @@ séquentielles.
 trois, et conclure d'un échantillon de 3 revient à mesurer le hasard. Les
 tests qui portent sur sa répartition balayent le monde jusqu'à disposer d'un
 échantillon utilisable, et vérifient d'abord qu'ils l'ont.
+
+**Les suites du moteur démarrent en `?sansprologue`.** Le prologue est devenu
+l'ouverture par défaut du jeu en 0.7, et les six suites qui mesurent le moteur
+chargeaient `index.html` sans paramètre : elles se seraient mises à mesurer un
+joueur immobile pendant quarante secondes, une Brume tenue en place et un
+inventaire vidé, sans que rien n'annonce que ce n'était plus le jeu qu'elles
+croyaient mesurer. `regressions.mjs` vérifie désormais que la mise en scène
+n'existe pas sous ce paramètre — le mécanisme, pas le symptôme. L'ouverture par
+défaut est couverte par `prologue07.mjs`, qui la joue.
 
 **`prologue07.mjs` JOUE, il ne lit pas.** Un pilote installé dans la page tient
 le joystick image par image, se dirige vers le sac, appuie sur les boutons,

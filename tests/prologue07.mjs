@@ -139,14 +139,34 @@ function installerPilote(profil) {
 
       if (t < pauseJusqua) { H.move(0, 0); return; }
 
-      // Ce qui reste part par-dessus bord. La ration se garde toujours : c'est
-      // le seul soin du jeu et elle pèse peu. Le cristal aussi en exploration,
-      // parce que c'est ce que ce profil est venu chercher — et parce que le
-      // garder est précisément ce qui doit le ralentir.
+      // Ce qui reste part par-dessus bord, LE PLUS LOURD D'ABORD — et en
+      // gardant de quoi faire un feu.
+      //
+      // La première version jetait le bois en premier, dans l'ordre où les
+      // ressources sont déclarées. C'était l'inverse du bon sens, et les
+      // chiffres du jeu le disent : la pierre pèse 13 kg, le bois 7, le
+      // cristal 5. Jeter le bois revenait donc à se débarrasser du plus léger
+      // des trois ET du seul carburant du feu. Mesuré : 7 feux et une mort à
+      // z −2023, contre 22 feux et un parcours terminé quand le bois restait
+      // dans le sac.
+      //
+      // La ration ne part jamais : c'est le seul soin du jeu, elle vaut
+      // 6 kg. Le cristal ne part qu'en dernier — il est le plus léger et le
+      // plus précieux — et jamais en exploration, où le garder est
+      // précisément ce qui doit ralentir ce profil.
       if (charge > 0.5) {
-        for (const type of p.garde ? ["bois", "pierre"] : ["bois", "pierre", "cristal"]) {
-          if ((etat.inventory[type] || 0) > 0) { H.drop(type); break; }
+        const reserve = { bois: 2, pierre: 1 };   // le prix d'un feu
+        const ordre = p.garde ? ["pierre", "bois"] : ["pierre", "bois", "cristal"];
+        let jete = null;
+        for (const type of ordre) {
+          if ((etat.inventory[type] || 0) > (reserve[type] || 0)) { jete = type; break; }
         }
+        // Plus rien au-dessus de la réserve : elle passe par-dessus bord aussi,
+        // sinon le pilote se fige avec un sac plein qu'il refuse de vider.
+        if (!jete) {
+          for (const type of ordre) if ((etat.inventory[type] || 0) > 0) { jete = type; break; }
+        }
+        if (jete) H.drop(jete);
       }
 
       // --- détour vers une ressource ---

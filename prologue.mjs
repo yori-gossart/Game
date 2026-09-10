@@ -104,7 +104,11 @@ export const SCENE = {
   fin:         { z: -3100 },            // au-delà : monde procédural pur
 
   rayonSac: 3.2,
-  rayonTraces: 14,
+  // Les ornières font 22 unités de long et le camp s'étale autour : « trouver
+  // les traces » se joue en marchant dessus, pas en visant un point. Le rayon
+  // était de 14 et le parcours joué passait à côté — la scène est posée sur
+  // l'axe du joueur 220 unités plus tôt, et il dérive encore un peu après.
+  rayonTraces: 26,
   rayonPilier: 12,
 };
 
@@ -164,8 +168,35 @@ const OBJECTIFS = {
 export function createPrologue(deps) {
   const {
     THREE, scene, camera, player, game, decors, living,
-    terrainHeight, contaminable, sons, degagerZone = () => {}, log = () => {},
+    terrainHeight, contaminable, sons, degagerZone = () => {},
+    lireLacet = () => 0, poserLacet = () => {}, log = () => {},
   } = deps;
+
+  // ───────────────────────────────────────────────────────────────────────
+  // La caméra, et le seul plan du jeu qui la prend en main
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * Fait pivoter la caméra vers un cap, par le plus court chemin.
+   *
+   * Le prologue ne touche à la caméra QU'ICI, et pour un seul plan : celui où
+   * le personnage se retourne. La caméra du jeu est posée en +Z, dos à la
+   * direction de fuite — le mur de brume est donc toujours hors champ tant
+   * qu'on ne se retourne pas. Le §12 demande que la Brume soit révélée entre
+   * 40 et 60 mètres et le §14 qu'on voie une silhouette se faire rattraper :
+   * les deux se jouaient derrière l'objectif, et personne ne les voyait.
+   *
+   * Renvoie vrai quand le cap est atteint.
+   */
+  function viserLacet(cible, delta, vitesse = 1.9) {
+    const actuel = lireLacet();
+    let ecart = (cible - actuel + Math.PI) % (Math.PI * 2) - Math.PI;
+    if (ecart < -Math.PI) ecart += Math.PI * 2;
+    const pas = vitesse * delta;
+    if (Math.abs(ecart) <= pas) { poserLacet(cible); return true; }
+    poserLacet(actuel + Math.sign(ecart) * pas);
+    return false;
+  }
 
   const $ = (id) => document.getElementById(id);
   const voile = $("pro-voile");
@@ -195,6 +226,8 @@ export function createPrologue(deps) {
   let piedsAncrage = null;      // z du joueur au réveil
   let actionCourante = null;    // { texte, rayon, cible, faire }
   let fogFige = null;           // brume tenue pendant le réveil
+  let plafondBrume = 0;         // sa valeur d'origine, pour borner la dérive
+  let lacetDepart = 0;          // le cap de la caméra avant le plan du regard
   let reactionRestante = 0;     // secondes de brume ralentie
 
   const horodatage = {};        // étape -> secondes, pour mesurer les parcours
@@ -230,6 +263,11 @@ export function createPrologue(deps) {
 
   function poserObjectif(texte) {
     if (!objectif) return;
+    // Un objectif atteint qu'on laisse affiché est pire qu'aucun objectif : il
+    // dit au joueur de faire ce qu'il vient de faire. `null` le retire, et le
+    // bandeau reste vide pendant le plan du regard — c'est-à-dire pendant la
+    // seule scène du prologue où il n'y a rien à lire.
+    if (!texte) { objectif.hidden = true; return; }
     objectif.hidden = false;
     objectifTexte.textContent = texte;
   }
@@ -641,6 +679,7 @@ export function createPrologue(deps) {
     for (const a of acteurs) scene.remove(a.objet);
     acteurs.length = 0;
     document.body.classList.remove("pro-fige");
+    poserLacet(lacetDepart);
     if (voile) { voile.hidden = true; voile.className = ""; }
     if (replique) { replique.hidden = true; replique.classList.remove("visible", "ordre"); }
     if (boutonAction) boutonAction.hidden = true;
@@ -665,6 +704,7 @@ export function createPrologue(deps) {
     reactionRestante = 0;
     piedsAncrage = player.position.z;
     piedsAncrageX = player.position.x;
+    lacetDepart = lireLacet();
     cibleSac = { x: piedsAncrageX + SCENE.sac.x, z: piedsAncrage + SCENE.sac.z };
 
     // Le sac est vide : il est par terre. Le joueur n'a rien sur le dos.
@@ -678,6 +718,7 @@ export function createPrologue(deps) {
     // La Brume est tenue en place pendant le réveil : on ne meurt pas dans une
     // cinématique d'ouverture.
     fogFige = player.position.z + 52 + Math.random() * 8;   // 52 à 60 u, §12
+    plafondBrume = fogFige;
     game.setFogZ(fogFige);
 
     franchir("PROLOGUE_START");
@@ -729,8 +770,8 @@ export function createPrologue(deps) {
       case "PROLOGUE_START": sequenceReveil(); break;
       case "PLAYER_WAKE": sequenceSac(); break;
       case "BAG_VISIBLE": break;                 // attend le ramassage
-      case "BAG_PICKED_UP": sequenceBrume(); break;
-      case "FOG_REVEALED": sequenceOrdre(); break;
+      case "BAG_PICKED_UP": sequenceBrume(delta); break;
+      case "FOG_REVEALED": sequenceOrdre(delta); break;
       default: sequenceLibre(); break;
     }
 
@@ -785,28 +826,79 @@ export function createPrologue(deps) {
     const sacSol = props.find((p) => p.name === "prologue-sac-sol");
     if (sacSol) { sacSol.visible = false; }
 
+    poserObjectif(null);          // il l'a, son sac
     dire(REPLIQUES.tour, { duree: 4 });
     franchir("BAG_PICKED_UP");
   }
 
   // --- 3. la Brume ------------------------------------------------------
-  function sequenceBrume() {
+  //
+  // LA SCÈNE CENTRALE, et celle qui ne se jouait pas.
+  //
+  // Le condamné courait à 3,2 u/s devant un mur TENU EN PLACE, et il partait
+  // trente unités devant lui. Il fuyait donc dans la même direction que la
+  // Brume, plus vite qu'elle, en s'en éloignant : il n'a jamais pu être
+  // rattrapé une seule fois. Il finissait par sortir du champ, `vivant` passait
+  // à faux par la règle « trop loin devant », et la vérification « le condamné
+  // a bien disparu » était verte — pour la mauvaise raison. C'est le pire
+  // genre de test vert qui soit.
+  //
+  // Deux corrections. Le mur AVANCE pendant ce plan, lentement, de neuf unités
+  // — assez pour qu'on le voie se refermer, beaucoup trop peu pour tuer qui
+  // que ce soit à cinquante unités de là. Et le condamné n'est plus rapide :
+  // il boite à 0,9 u/s, juste devant le front. Le mur le dépasse en quatre
+  // secondes, à l'endroit exact où le joueur regarde.
+  const DERIVE_PLAN = 9;
+
+  function sequenceBrume(delta) {
+    // Il se retourne. Le joystick est repris pendant ce plan : trois secondes
+    // de caméra qui pivote pendant qu'on tient une direction ne se jouent
+    // pas, elles se subissent.
+    if (depuisEtape > 1.2) {
+      document.body.classList.add("pro-fige");
+      viserLacet(lacetDepart + Math.PI, delta);
+    }
+
     if (depuisEtape > 1.6 && !acteurs.length) {
       // Ce qui fuit passe devant lui : le regard suit, et trouve la Brume.
       const px = player.position.x, pz = player.position.z;
       lacher("animal", { x: px - 9, z: pz + 6, vitesse: 9.5, cap: Math.PI + 0.25 });
       lacher("animal", { x: px + 7, z: pz + 9, vitesse: 8.8, cap: Math.PI - 0.2 });
       lacher("nomade", { x: px + 16, z: pz + 22, vitesse: 4.4, cap: Math.PI - 0.1 });
-      // Celui-ci ne court pas assez vite.
-      lacher("animal", { x: px - 15, z: pz + 30, vitesse: 3.2, cap: Math.PI, condamne: true });
+      // Celui-là ne court pas assez vite. Il n'ira pas plus loin.
+      //
+      // Quatre unités devant le front, à 0,6 u/s, contre un mur qui se referme
+      // à 1,8 : il est rejoint en un peu plus de trois secondes. Mesuré et
+      // ajusté : à six unités et 0,9 u/s il l'était à la onzième seconde,
+      // c'est-à-dire APRÈS le repli de 6,5 s qui révèle la Brume de toute
+      // façon. C'est la scène qui doit déclencher l'étape, pas le minuteur —
+      // sinon le minuteur la déclenchera toujours et la scène ne servira à
+      // rien.
+      lacher("animal", { x: px - 11, z: fogFige - 4, vitesse: 0.6, cap: Math.PI,
+                         condamne: true });
       dire(REPLIQUES.brumeVue, { duree: 3.2 });
     }
+
+    // Le mur se referme pendant le plan. `fogFige` est la position tenue :
+    // c'est elle qu'on fait glisser, sinon la ligne suivante de update() la
+    // remettrait à sa valeur d'origine à l'image d'après.
+    if (fogFige !== null && depuisEtape > 1.6) {
+      fogFige = Math.max(fogFige - DERIVE_PLAN * delta / 5, plafondBrume - DERIVE_PLAN);
+    }
+
     if (depuisEtape > 6.5) franchir("FOG_REVEALED");
   }
 
   // --- 4. l'ordre -------------------------------------------------------
-  function sequenceOrdre() {
-    if (depuisEtape > 1.2) {
+  //
+  // Il a vu. Il se retourne, et on lui rend la main dans le même geste : le
+  // mot FUIS tombe à l'instant où la caméra revient dans l'axe de fuite, pas
+  // avant. Un ordre donné à un joueur qui regarde encore ailleurs n'est pas
+  // un ordre, c'est un sous-titre.
+  function sequenceOrdre(delta) {
+    const enPlace = viserLacet(lacetDepart, delta, 2.6);
+    if (enPlace && depuisEtape > 1.2) {
+      document.body.classList.remove("pro-fige");
       dire(REPLIQUES.ordre, { duree: 2.6, ordre: true });
       poserObjectif(OBJECTIFS.fuir);
       fogFige = null;              // la Brume repart
@@ -944,7 +1036,8 @@ export function createPrologue(deps) {
       for (let k = 0; k <= i; k++) franchir(ETAPES[k]);
       if (i >= ETAPES.indexOf("RUN_OBJECTIVE")) {
         fogFige = null;
-        document.body.classList.remove("pro-fige");
+        poserLacet(lacetDepart);   // sauter le plan du regard ne doit pas
+        document.body.classList.remove("pro-fige");   // laisser la caméra retournée
         voile.classList.add("clair");
         poserObjectif(franchies.has("MAIN_OBJECTIVE_REVEALED")
           ? OBJECTIFS.convoi : OBJECTIFS.fuir);

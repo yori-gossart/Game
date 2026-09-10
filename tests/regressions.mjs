@@ -7,7 +7,14 @@
  */
 import { chromium, devices, CHROME, GL_ARGS } from "./_pw.mjs";
 
-const URL = process.env.FOG_URL || "http://127.0.0.1:8123/index.html";
+/* Le prologue est désormais l'ouverture par défaut du jeu. Cette suite mesure
+   le MOTEUR et la RUN, pas la mise en scène : une ouverture de quarante
+   secondes pendant laquelle le joueur est immobile, la Brume tenue en place et
+   l'inventaire vidé fausserait chacune de ses mesures. `?sansprologue` démarre
+   directement dans le monde procédural — c'est précisément ce pour quoi ce
+   paramètre existe. L'ouverture, elle, est couverte par `prologue07.mjs`, qui
+   la joue. */
+const URL = process.env.FOG_URL || "http://127.0.0.1:8123/index.html?sansprologue";
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -343,6 +350,32 @@ const mort = await H(() => {
 });
 ok("mort: écran masqué tant que la run vit",
    mort.hidden === true && mort.display === "none", JSON.stringify(mort));
+
+console.log("\n=== LE PROLOGUE NE DOIT PAS TOURNER SOUS ?sansprologue ===");
+/* Cause réelle : le prologue est devenu l'ouverture PAR DÉFAUT en 0.7, et les
+   six suites qui mesurent le moteur chargeaient `index.html` sans paramètre.
+   Elles se seraient mises à mesurer un joueur immobile pendant quarante
+   secondes, une Brume tenue en place et un inventaire vidé — sans que rien
+   n'annonce que ce n'était plus le jeu qu'elles croyaient mesurer.
+
+   La vérification vise le mécanisme, pas le symptôme : ce n'est pas « le
+   joueur bouge » mais « la mise en scène n'existe pas ». Un prologue qui
+   reviendrait par une autre porte tomberait ici. */
+const prologueEteint = await H(() => ({
+  actif: window.HORIZON.prologue.actif,
+  etape: window.HORIZON.prologue.etape,
+  props: window.HORIZON.prologue.props,
+  fige: document.body.classList.contains("pro-fige"),
+  voile: !document.getElementById("pro-voile").hidden,
+}));
+ok("prologue: inactif sous ?sansprologue",
+   prologueEteint.actif === false && prologueEteint.etape === null,
+   `actif ${prologueEteint.actif}, étape ${prologueEteint.etape}`);
+ok("prologue: aucun objet mis en scène",
+   prologueEteint.props.length === 0, prologueEteint.props.join(", ") || "aucun");
+ok("prologue: le joueur a la main et l'écran est dégagé",
+   prologueEteint.fige === false && prologueEteint.voile === false,
+   `fige ${prologueEteint.fige}, voile ${prologueEteint.voile}`);
 
 console.log("\n=== ERREURS ===");
 ok("runtime: aucune erreur console sur l'ensemble du parcours", errors.length === 0,

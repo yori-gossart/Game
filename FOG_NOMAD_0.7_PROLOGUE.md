@@ -208,16 +208,52 @@ personnage le pense, une fois, et l'objet le montre.
 
 ## 5. Ce qui fuit, et ce qui se fait rattraper
 
-C'est la scène centrale. Quatre silhouettes traversent le champ de vision au
-moment où le joueur relève la tête : deux animaux rapides, un nomade, et un
-quatrième animal **qui court à 3,2 unités par seconde**.
+C'est la scène centrale, et c'est celle qui ne se jouait pas du tout.
 
-La Brume avance à 5,2.
+### Il fallait d'abord qu'il se retourne
 
-Il est rattrapé. Il s'efface dedans, il y a un son, puis le silence. **Aucun
-corps, aucun monstre, aucune explication.** Le joueur comprend en une seconde
-ce que « être rattrapé » veut dire, et c'est la seule fois du jeu où on le lui
-montre au lieu de le lui faire subir.
+La caméra du jeu est posée derrière le joueur, du côté +Z, dos à la direction
+de fuite. Le mur de brume est en +Z lui aussi, plus loin. Il est donc
+**toujours hors champ** tant que le joueur ne se retourne pas — et rien ne le
+faisait se retourner.
+
+Les §12 et §14 demandent que la Brume soit révélée entre 40 et 60 mètres et
+qu'on voie une silhouette se faire rattraper. Les deux se jouaient derrière
+l'objectif. Le prologue prend donc la caméra en main, **une seule fois et pour
+ce seul plan** : elle pivote de 180° en un peu plus d'une seconde, le joueur
+regarde ce qui arrive, puis elle revient dans l'axe — et le mot **FUIS** tombe
+à l'instant exact où elle y revient. Un ordre donné à un joueur qui regarde
+encore ailleurs n'est pas un ordre, c'est un sous-titre.
+
+Le joystick est repris pendant ce plan. Trois secondes de caméra qui pivote
+pendant qu'on tient une direction ne se jouent pas, elles se subissent.
+
+### Et il fallait que le mur puisse rattraper quelqu'un
+
+Quatre silhouettes traversent le champ : deux animaux rapides, un nomade, et un
+quatrième **qui n'ira pas plus loin**.
+
+La première version le lançait à 3,2 u/s, trente unités devant un mur **tenu en
+place** pendant le réveil. Il fuyait donc dans la même direction que la Brume,
+plus vite qu'elle, en s'en éloignant : il n'a jamais pu être rattrapé une seule
+fois. Il finissait par sortir du champ, son drapeau `vivant` passait à faux par
+la règle « trop loin devant », et la vérification « le condamné a bien disparu »
+était **verte** — pour la mauvaise raison. C'est le pire genre de test vert qui
+soit, et il a fallu trois parcours complets pour s'en apercevoir.
+
+Deux corrections. Le mur **avance** pendant ce plan, de neuf unités : assez pour
+qu'on le voie se refermer, beaucoup trop peu pour tuer qui que ce soit à
+cinquante unités de là. Et le condamné n'est plus rapide — il boite à 0,6 u/s,
+quatre unités devant le front. Le mur le dépasse en un peu plus de trois
+secondes, à l'endroit exact où le joueur regarde, et **avant** le repli de
+6,5 secondes qui révélait la Brume de toute façon. C'est la scène qui déclenche
+l'étape, pas le minuteur — sinon le minuteur la déclenche toujours et la scène
+ne sert à rien.
+
+Il s'efface dedans, il y a un son, puis le silence. **Aucun corps, aucun
+monstre, aucune explication.** Le joueur comprend en une seconde ce que « être
+rattrapé » veut dire, et c'est la seule fois du jeu où on le lui montre au lieu
+de le lui faire subir.
 
 Les silhouettes réutilisent les géométries de `living.mjs`. Deux apparences
 différentes pour la même espèce serait le défaut le plus visible qui soit : un
@@ -383,7 +419,68 @@ moment identifiable où « le jeu commence », elle a raté.
 
 ---
 
-## 11. Aucun asset externe ajouté
+## 11. La passe visuelle sur la Brume : NON FAITE, et pourquoi
+
+Le §37 demande que la Brume soit « immédiatement reconnaissable sur une capture
+d'écran ». Elle ne l'est pas, et rien n'a été livré pour y remédier. Ce qui
+suit est le diagnostic, mesuré, parce qu'il vaut plus qu'un correctif hasardeux.
+
+### Ce qu'on voit réellement
+
+En masquant tout le reste de la scène et en regardant le mur de face, à 33
+unités, on obtient **trois bandes horizontales de couleur unie, à bords
+parfaitement droits** : violet sombre, ardoise, bleu pâle. Aucune crête, aucun
+relief, aucun mouvement lisible.
+
+Le code dit pourtant « mur de brume en quatre nappes à crête ondulée », et il ne
+ment pas : la crête est bien calculée. Elle est simplement invisible.
+
+### Pourquoi
+
+Trois mesures, et elles s'additionnent.
+
+| | |
+| --- | --- |
+| Champ horizontal de la caméra, en portrait | **≈ 14°** |
+| Largeur de mur visible à 30 unités | **≈ 15 unités** |
+| Périodes des deux ondes de crête | **114 et 300 unités** |
+| Segments du plan | 26 sur 460 unités, soit un sommet toutes les **17,7 unités** |
+
+Sur les quinze unités que le joueur voit, une onde de période 114 est
+strictement plate — et un maillage qui n'a un sommet que toutes les 17,7 unités
+ne pourrait de toute façon rien porter de plus court.
+
+Le mur a été sculpté pour être vu **de loin et de face**, comme il l'est sur une
+capture prise en vol. Le joueur, lui, le regarde toujours de près et par une
+meurtrière.
+
+### Pourquoi rien n'a été livré
+
+Une correction a été écrite et **retirée** : troisième onde de période 26
+unités, et 96 segments au lieu de 26. Vérifiée par capture, dans les mêmes
+conditions que le diagnostic : **aucune différence visible.** L'amplitude de la
+crête est une fraction de sa hauteur, et sur la nappe d'avant-garde cela donne
+un frémissement de 0,6 unité — noyé dans les 5 unités du dégradé alpha qui
+adoucit ce bord.
+
+Elle aurait coûté 3 900 triangles pour rien. La règle du projet est nette :
+ajouter du coût pour un changement qu'on ne voit pas est exactement ce qu'il ne
+faut pas faire, et la 0.6 a déjà appris ce que vaut un art pass qu'on annonce
+sans l'avoir regardé.
+
+Le vrai problème n'est d'ailleurs pas la crête. C'est que **la Brume n'est
+jamais cadrée comme un mur** : elle remplit l'image ou elle n'y est pas. Cela ne
+se règle pas en faisant onduler un bord — cela demande de décider comment le
+jeu la montre, et cette décision-là se prend devant un écran, pas dans un
+raisonnement. Trois fois dans ce projet un raisonnement d'orientation ou de
+cadrage s'est trompé et une image a tranché.
+
+**Verdict : FAIL.** Les §35 (terrain local) et §36 (ciel) n'ont pas été
+abordés non plus.
+
+---
+
+## 12. Aucun asset externe ajouté
 
 Une version qui met en scène une tour-balise, un pilier ancien, des ornières de
 convoi et deux cristaux lumineux est exactement le genre de version où un modèle
