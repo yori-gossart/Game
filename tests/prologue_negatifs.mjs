@@ -42,6 +42,21 @@ await page.waitForFunction(
 
 const H = (fn, arg) => page.evaluate(fn, arg);
 
+/**
+ * Ce fichier téléporte le joueur d'un bout à l'autre du prologue pour atteindre
+ * des étapes lointaines. Entre deux contrôles, la Brume continue d'avancer et
+ * finit par le rattraper — et une mort transforme tous les contrôles suivants
+ * en échecs qui n'ont rien à voir avec leur sujet (l'écran de fin intercepte
+ * même les clics).
+ *
+ * On la repousse donc explicitement avant chaque situation. Ce n'est pas une
+ * commodité : ce banc mesure des REFUS, et la pression de la Brume n'en est pas
+ * un. Le parcours réel, lui, est mesuré par prologue07.mjs, qui ne triche pas.
+ */
+async function repousserBrume(u = 500) {
+  await H((d) => window.HORIZON.setFogGap(d), u);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 console.log("\n=== LE SAC NE SE PREND PAS À DISTANCE ===");
 
@@ -81,6 +96,7 @@ console.log("\n=== UNE RESSOURCE NE SE RAMASSE PAS TOUTE SEULE ===");
 await H(() => window.HORIZON.sauterPrologue("RUN_OBJECTIVE"));
 await page.waitForTimeout(800);
 
+await repousserBrume();
 const avant = await H(() => {
   const r = window.HORIZON.resourceSample.find((x) => x.type === "bois");
   if (!r) return null;
@@ -90,6 +106,7 @@ const avant = await H(() => {
 // Trois secondes de montre, immobile SUR la ressource. En 0.7 elle était dans
 // le sac depuis longtemps.
 await page.waitForTimeout(3000);
+await repousserBrume();
 const apres = await H(() => ({
   collected: window.HORIZON.game.collected,
   poids: window.HORIZON.game.weight,
@@ -105,7 +122,12 @@ ok("collecte: une cible est bien ARMÉE — le refus n'est pas une panne",
    apres.candidat !== null && apres.bouton === true, apres.candidat || "aucune");
 
 // Et elle entre dans le sac quand on décide.
-await page.click("#pick-up");
+// Clic dans la page plutôt que clic à l'écran : le panneau ?prologuetest, dont
+// ce fichier a besoin pour atteindre les étapes lointaines, couvre le bas de
+// l'écran et intercepte le pointeur. Ce que ce test doit prouver, c'est que la
+// ressource n'entre PAS dans le sac sans décision — pas que le bouton tombe
+// sous le pouce, ce dont s'occupent le banc principal et le plan de test.
+await H(() => document.getElementById("pick-up").click());
 await page.waitForFunction(
   () => window.HORIZON.game.collected >= 1, null, { timeout: 15000 }).catch(() => {});
 const choisi = await H(() => ({ collected: window.HORIZON.game.collected,
@@ -120,6 +142,10 @@ console.log("\n=== LE PILIER NE S'ACTIVE PAS À DISTANCE ===");
 await H(() => window.HORIZON.sauterPrologue("MAIN_OBJECTIVE_REVEALED"));
 await page.waitForTimeout(1200);
 
+await repousserBrume();
+await page.waitForFunction(
+  () => !!window.HORIZON.scene.getObjectByName("prologue-pilier-ancien"),
+  null, { timeout: 20000 }).catch(() => {});
 const pilierLoin = await H(() => {
   const p = window.HORIZON.scene.getObjectByName("prologue-pilier-ancien");
   if (!p) return { pose: false };
@@ -141,6 +167,7 @@ ok("pilier: aucune interaction possible hors de portée",
 ok("pilier: aucun bouton APPROCHER à 70 unités", etatLoin.bouton === false);
 
 // À portée, l'étape se franchit — sinon on aurait cassé la scène.
+await repousserBrume();
 await H(() => {
   const p = window.HORIZON.scene.getObjectByName("prologue-pilier-ancien");
   window.HORIZON.teleport(p.position.x, p.position.z + 5);
@@ -161,6 +188,22 @@ await page.waitForTimeout(1500);
 await H(() => window.HORIZON.sauterPrologue("FIRST_FIRE"));
 await page.waitForTimeout(1200);
 
+await repousserBrume();
+
+/* Les deux scènes lointaines sont posées À L'APPROCHE, à 220 unités devant, et
+   pas au démarrage — c'est ce qui garantit qu'elles tombent sur l'axe où le
+   joueur arrive réellement. Un saut d'étape à FIRST_FIRE ne les fait donc pas
+   exister, et chercher `prologue-traces` juste après ne trouve rien.
+   On approche d'abord, pour que la scène se pose comme en jeu. */
+await H(() => {
+  const p = window.HORIZON.prologue;
+  window.HORIZON.teleport(p.ancrage.x, p.ancrage.z + p.scene.traces.z + 210);
+});
+await page.waitForFunction(
+  () => !!window.HORIZON.scene.getObjectByName("prologue-traces"),
+  null, { timeout: 20000 }).catch(() => {});
+
+await repousserBrume();
 const tracesLoin = await H(() => {
   const t = window.HORIZON.scene.getObjectByName("prologue-traces");
   if (!t) return { pose: false };
@@ -174,6 +217,7 @@ ok("traces: la scène est bien posée", tracesLoin.pose === true);
 ok("traces: CONVOY_TRACE_FOUND ne se franchit pas à 80 unités",
    etatTraces === false);
 
+await repousserBrume();
 await H(() => {
   const t = window.HORIZON.scene.getObjectByName("prologue-traces");
   window.HORIZON.teleport(t.position.x, t.position.z);
@@ -219,12 +263,27 @@ const dernier = suivi[suivi.length - 1];
 ok("condamné: il a bien été lâché", suivi.length > 0, `${suivi.length} relevé(s)`);
 if (dernier) {
   // L'écart au front doit avoir DIMINUÉ : c'est la définition d'être rattrapé.
-  const ecarts = suivi.map((e) => e.z - e.fogZ);
+  //
+  // Le sens compte, et la première version l'avait à l'envers. Le condamné fuit
+  // DEVANT le mur, donc à un z PLUS PETIT que lui : l'écart utile est
+  // `fogZ − z`, positif tant que le mur est derrière lui, et c'est celui-là qui
+  // doit tomber jusqu'au seuil d'engloutissement (2,5 unités). Mesurer
+  // `z − fogZ` donnait un nombre négatif qui montait, et faisait échouer un
+  // rattrapage parfaitement réussi.
+  const ecarts = suivi.map((e) => e.fogZ - e.z);
   const premier = ecarts[0];
   const final = ecarts[ecarts.length - 1];
   console.log(`   écart au front : ${premier.toFixed(1)} → ${final.toFixed(1)} u`);
-  ok("condamné: l'écart au front DIMINUE", final < premier,
-     `${premier.toFixed(1)} → ${final.toFixed(1)}`);
+  /* On vérifie que l'écart SE REFERME, et on laisse le seuil au moteur.
+   *
+   * Exiger que le dernier échantillon soit sous 2,5 revenait à mesurer la
+   * cadence de sondage : à 700 ms d'intervalle et 1,2 u/s de fermeture, un
+   * relevé couvre 0,8 unité, et le franchissement tombe forcément entre deux.
+   * Mesuré : 3,6 → 2,7, puis englouti. Le drapeau `englouti` ci-dessous n'a
+   * qu'un seul chemin — celui où le moteur a lui-même vu passer le seuil —
+   * donc il porte déjà la preuve du franchissement. */
+  ok("condamné: l'écart au front SE REFERME", final < premier,
+     `${premier.toFixed(1)} → ${final.toFixed(1)} u, puis englouti (seuil moteur 2,5)`);
   ok("condamné: il est englouti, pas simplement disparu",
      dernier.englouti === true,
      dernier.englouti ? "englouti" : `vivant=${dernier.vivant}, englouti=${dernier.englouti}`);
@@ -250,6 +309,9 @@ ok("révélation: le prologue tient la Brume à sa distance de mise en scène",
    `imposée à ${brumeLoin.gap} u, ramenée à ${Math.round(await H(() => window.HORIZON.fogGap))} u`);
 
 console.log("\n=== ERREURS ===");
+ok("runtime: le joueur n'est pas mort pendant les contrôles",
+   (await H(() => window.HORIZON.game.dead)) === false,
+   await H(() => window.HORIZON.game.deathCause || "vivant"));
 ok("runtime: aucune erreur console", erreurs.length === 0,
    erreurs.slice(0, 3).join(" | ") || "aucune");
 

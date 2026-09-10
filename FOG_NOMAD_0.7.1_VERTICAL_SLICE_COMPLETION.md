@@ -262,7 +262,54 @@ et les actions, et les deux coins bas de l'écran leur appartiennent.
 
 ---
 
-## 11. Ce qui n'est PAS fait
+## 11. Coût de rendu
+
+Mesuré de la même façon sur les trois versions : Chromium en émulation Pixel 7,
+rendu logiciel, six secondes de marche.
+
+| | appels | triangles | géométries | textures | skinnés | objets |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.6a, monde | 57 | 44 847 | 73 | 3 | 6 | 360 |
+| 0.7, monde | 37 | 14 289 | 52 | 3 | 6 | 314 |
+| **0.7.1, monde** | **40** | **33 095** | **52** | **3** | **6** | **277** |
+| 0.7, prologue | 59 | 16 087 | 58 | 3 | 6 | 366 |
+| **0.7.1, prologue** | **70** | **43 117** | **78** | **3** | **6** | **382** |
+
+**Ces totaux ne se comparent pas ligne à ligne, et il faut le dire.** Chaque
+chargement tire une graine différente : le nombre de triangles dépend d'abord
+de ce qui pousse autour du joueur, pas de la version. Un écart de 14 000 à
+44 000 triangles entre deux relevés de la MÊME version est courant.
+
+Ce qui est comparable, parce que calculé et non relevé, c'est ce que la 0.7.1
+ajoute de façon déterministe :
+
+| | avant | après | delta |
+| --- | --- | --- | --- |
+| Nappes de brume (4 × plan) | 26 × 7 | 112 × 8 | **+5 712 triangles** |
+| Dôme de ciel | 32 × 14 | 48 × 20 | **+1 024 triangles** |
+| **Total** | | | **+6 736 triangles, 0 appel de rendu** |
+
+Le relief de profondeur des nappes coûte **zéro** : il déplace des sommets qui
+existaient déjà.
+
+Sur un budget que le brief fixe entre 50 et 100 k triangles, +6 736 est
+acceptable. Mais c'est une affirmation sur un budget, pas sur un téléphone.
+
+**Les images par seconde relevées ici ne valent rien.** Le rendu est logiciel :
+7 à 18 fps selon la version et la graine, ce qui ne prédit rien d'un GPU réel.
+La cible est un Samsung Galaxy A55, et cette validation-là n'appartient qu'à
+l'appareil.
+
+### Si la Brume coûte trop cher sur l'appareil
+
+`setFogDetail(false)` retire déjà les deux nappes de fond en qualité réduite —
+elles ne portent que de la profondeur, jamais une information de jeu, et le mur
+reste opaque et sa crête lisible. C'est **la moitié du coût de la brume** sans
+toucher à sa lecture. Le mécanisme existait avant la 0.7.1 et n'a pas changé.
+
+---
+
+## 12. Ce qui n'est PAS fait
 
 Il vaut mieux le dire que le maquiller.
 
@@ -272,8 +319,29 @@ Il vaut mieux le dire que le maquiller.
 | §I terrain local | **NON FAIT** | aucune passe locale sur le relief, le chemin, le sol autour des dix premières minutes |
 | §K tour-balise | **INCHANGÉE** depuis la 0.7 | elle raconte déjà la chute — quatre piliers en deux étages, un manquant, plateforme, cristal tournant, pilier couché, traînée de débris — mais elle n'a pas été retravaillée |
 | §M animaux | **PROVISOIRE** | aucun pack CC0 d'animaux atteignable, voir `ASSET_LICENSES.md` |
-| §N audio | **PARTIEL** | réveil, disparition, souvenir existent et sont synthétisés ; pas de grondement de Brume continu |
+| §N audio | **PARTIEL** | tout le paysage sonore demandé existe déjà et est synthétisé — voir ci-dessous — mais rien n'a été ajouté ni retravaillé en 0.7.1 |
 | Rollback production | **NON EXÉCUTÉ** | aucun outil disponible, voir `DEPLOYMENT_RECOVERY_0.7.1.md` |
+
+### L'audio, vérifié plutôt que supposé
+
+Le §N demandait respiration de réveil, grondement de Brume, animaux, fuite, feu,
+réaction du pilier. Vérification faite dans `audio.mjs` avant d'annoncer quoi
+que ce soit : **tout existe déjà**, depuis la 0.5 pour l'essentiel et la 0.7
+pour l'ouverture —
+
+`reveil()` (acouphène, souffle, cœur) · `disparition()` (sec, coupé net,
+volontairement ambigu) · `souvenir()` · `grondement` continu dont le volume ET
+la fréquence suivent la marge de brume sur 150 unités · `pas()` · `collecte()` ·
+`feu()` · `cristal()` · `jeter()` · `essouffle()` · `mort()`.
+
+Aucun fichier audio externe, aucune licence à vérifier : tout est synthétisé
+dans le navigateur.
+
+Ce qui n'a pas été fait, c'est de le **retravailler**. La 0.7.1 n'a rien ajouté
+à ce paysage sonore, et l'annoncer comme un chantier de cette version aurait été
+malhonnête.
+
+---
 
 Les structures du §L, elles, sont bien **posées et visibles** : la tour, le camp
 du convoi (banc, lanterne, clôture) et le pilier ancien sont dans la scène et

@@ -1089,6 +1089,10 @@ export function createPrologue(deps) {
         le recalculer depuis SCENE en dehors d'ici donnerait une seconde
         source de vérité, et elles finiraient par diverger. */
     get cibleSac() { return { ...cibleSac }; },
+    /** Le point de réveil : toute la mise en scène est posée par rapport à lui.
+        Les bancs en ont besoin pour atteindre une scène AVANT qu'elle existe —
+        elles sont posées à l'approche, pas au démarrage. */
+    get ancrage() { return { x: piedsAncrageX, z: piedsAncrage }; },
     get props() { return props.map((p) => p.name); },
     get acteurs() {
       return acteurs.map((a) => ({ type: a.type, vivant: a.vivant,

@@ -45,6 +45,23 @@ await page.reload({ waitUntil: "load" });
 await page.waitForTimeout(2800);
 
 const wait = (ms) => page.waitForTimeout(ms);
+
+/* RAMASSAGE VOLONTAIRE (0.7.1). Se tenir à côté d'une ressource ne la met plus
+ * dans le sac : la proximité arme une cible, et il faut appuyer. Ce n'est pas
+ * un détail de test — c'est le principe du jeu. */
+async function prendre(page, essais = 40) {
+  for (let i = 0; i < essais; i++) {
+    const fait = await page.evaluate(() => {
+      const b = document.getElementById("pick-up");
+      if (b && !b.hidden) { b.click(); return true; }
+      return false;
+    });
+    if (fait) return true;
+    await page.waitForTimeout(100);
+  }
+  return false;
+}
+
 const H = (fn, arg) => page.evaluate(fn, arg);
 
 // ---------------------------------------------------------------------------
@@ -159,6 +176,9 @@ ok("jeter: l'objet survit à l'éloignement (chunk encore actif)",
 // La collecte dure 0,6 s de temps de jeu et démarre à portée : on attend
 // qu'elle aboutisse, plutôt que de parier sur une durée réelle fixe.
 await H((c) => window.HORIZON.teleport(c.x, c.z + 1.2), cible);
+// L'objet jeté a un délai avant de redevenir ramassable (`readyAt`), puis il
+// faut APPUYER : depuis la 0.7.1 rien n'entre dans le sac tout seul.
+await prendre(page, 90);
 const repris = await H(async () => {
   const limite = performance.now() + 8000;
   while (window.HORIZON.bookkeeping.jetesAuSol > 0 && performance.now() < limite) {

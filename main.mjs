@@ -3561,6 +3561,8 @@ window.HORIZON = {
       temps: prologue.temps,
       sacPris: prologue.sacPris,
       cibleSac: prologue.cibleSac,
+      ancrage: prologue.ancrage,
+      scene: prologue.SCENE,
       props: prologue.props,
       acteurs: prologue.acteurs,
       etapes: ETAPES_PROLOGUE,

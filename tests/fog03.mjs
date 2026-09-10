@@ -37,6 +37,29 @@ const ok = (n, cond, d="") => { R.push({n,cond}); console.log(`${cond?"PASS":"FA
  * Mesuré sur trois exécutions consécutives du même code : 45/45, 38/45, 42/45.
  * Le code ne changeait pas ; la charge de la machine, si. C'est le principe
  * écrit dans tests/README.md, et ce fichier ne le respectait pas. */
+
+/* RAMASSAGE VOLONTAIRE (0.7.1).
+ *
+ * Se tenir à côté d'une ressource ne la met plus dans le sac : la proximité
+ * arme une cible, et il faut appuyer. Ce n'est pas un détail de test — c'est le
+ * principe du jeu, « je CHOISIS de prendre ce qui pourra m'aider ». Les blocs
+ * qui suivent pressent donc le bouton, comme un joueur.
+ *
+ * Ils vérifient au passage quelque chose que la version automatique ne pouvait
+ * pas vérifier : qu'une cible est bien ARMÉE avant qu'on appuie. */
+async function prendre(page, essais = 40) {
+  for (let i = 0; i < essais; i++) {
+    const fait = await page.evaluate(() => {
+      const b = document.getElementById("pick-up");
+      if (b && !b.hidden) { b.click(); return true; }
+      return false;
+    });
+    if (fait) return true;
+    await page.waitForTimeout(100);
+  }
+  return false;
+}
+
 async function attendre(page, condition, limite = 15000) {
   try {
     await page.waitForFunction(condition, null, { timeout: limite });
@@ -184,13 +207,17 @@ const cible = await p.evaluate(() => {
   window.HORIZON.teleport(t.x, t.z);
   return { before: window.HORIZON.game.weight };
 });
+await attendre(p, () => window.HORIZON.game.candidateType !== null);
+const arme = await p.evaluate(() => window.HORIZON.game.candidateType);
+ok("collecte: la proximité ARME une cible sans la ramasser", arme !== null, arme || "aucune");
+await prendre(p);
 await attendre(p, () => window.HORIZON.game.collected >= 1);
 const pick = cible && await p.evaluate((before) => {
   const st = window.HORIZON.game;
   return { before, after: st.weight, collected: st.collected, inv: { ...st.inventory },
            tier: window.HORIZON.bagTier };
 }, cible.before);
-ok("collecte: ramassage automatique à proximité", pick && pick.after > pick.before,
+ok("collecte: le ramassage volontaire remplit le sac", pick && pick.after > pick.before,
    pick ? `poids ${pick.before} -> ${pick.after}` : "aucune cible");
 ok("collecte: objet ajouté à l'inventaire", pick && pick.collected >= 1);
 
@@ -229,6 +256,8 @@ await p.evaluate(() => {
   const t = window.HORIZON.resourceSample.find(r => r.type === "bois");
   if (t) window.HORIZON.teleport(t.x, t.z);
 });
+await attendre(p, () => window.HORIZON.game.candidateType !== null);
+await prendre(p);
 await attendre(p, () => window.HORIZON.game.collected >= 1);
 const drop = await p.evaluate(() => {
   const before = window.HORIZON.game.weight;
