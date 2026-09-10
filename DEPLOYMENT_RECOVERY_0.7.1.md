@@ -217,6 +217,26 @@ l'autre dans ce dépôt — aurait cassé le projet au lieu de le réparer.
 Si l'on veut une branche de production saine, c'est une décision humaine à
 prendre dans les réglages du projet.
 
+### Vérifié après coup, pas supposé
+
+La 0.7.1 a été poussée sur `fog-nomad-vertical-slice-completion-0.7.1`, et le
+`target` du déploiement a été relu **avant de rien annoncer** :
+
+| | |
+| --- | --- |
+| Déploiement | `dpl_41XAvQ9uXZ6nTog1FUWpXA7sSRWt` |
+| Commit | `49ad9b1` |
+| Cible | **`null`, c'est-à-dire PREVIEW** |
+| Alias de branche | `horizon-proto-git-fog-nomad-vertical-slic-15c69f-nutricyclev01a.vercel.app` |
+
+Et le projet, relu au même moment : `latestDeployment.target` vaut `null`, les
+trois domaines de production sont inchangés, aucun déploiement de production
+n'a été créé depuis l'incident.
+
+Cela confirme au passage l'hypothèse du §3 : le push de la branche 0.7 n'avait
+produit aucun déploiement parce que son SHA avait déjà été construit. Les
+commits 0.7.1 sont nouveaux, et ils ont bien déclenché des previews.
+
 ### Ce qui n'a été ni supprimé ni écrasé
 
 Aucun projet, aucun déploiement, aucun domaine, aucune branche, aucun historique.
