@@ -106,6 +106,21 @@
       <button id="new-world" type="button" class="dev-only">NOUVEAU</button>
     </div>
 
+    <!-- ================= PROLOGUE (0.7) =================
+         Trois couches, et pas une de plus. Le voile porte le réveil, la
+         réplique porte une phrase à la fois, l'objectif reste à l'écran.
+         Tout le reste du prologue se joue dans le monde, pas dans du texte. -->
+    <div id="pro-voile" hidden></div>
+    <p id="pro-replique" hidden aria-live="polite"></p>
+    <div id="pro-objectif" hidden>
+      <span class="k">OBJECTIF</span>
+      <strong id="pro-objectif-texte"></strong>
+    </div>
+    <button id="pro-action" hidden type="button">
+      <span class="glyph">✋</span>
+      <span class="txt" id="pro-action-texte">PRENDRE</span>
+    </button>
+
     <div id="loading">
       <div class="loading-mark">◌</div>
       <strong>HORIZON</strong>

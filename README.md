@@ -1,10 +1,15 @@
-# Fog Nomad — Living World 0.5
+# Fog Nomad — Prologue 0.7
 
 Prototype de jeu mobile bâti sur le moteur **Horizon 0.2**. Un monde beau et
 mourant, une brume qui le dévore derrière vous, et un sac qui vous ralentit
 d'autant plus que vous avez été avide.
 
-- Version courante — monde vivant, génération contextuelle, modes, sac,
+- Version courante — **le prologue** : une ouverture mise en scène qui s'efface
+  quand elle a fini de parler : **`FOG_NOMAD_0.7_PROLOGUE.md`**
+- Comment le juger sur un téléphone : **`PROLOGUE_TEST_PLAN.md`**
+- Correctif joueur et audit honnête de l'art pass : **`FOG_NOMAD_0.6A_PLAYER_FIX.md`**
+- Direction artistique et assets réels : **`ART_DIRECTION_0.6.md`**, **`ASSET_LICENSES.md`**
+- Étape précédente — monde vivant, génération contextuelle, modes, sac,
   mesures : **`FOG_NOMAD_LIVING_WORLD_0.5.md`**
 - Étape précédente — équilibre, pression, identité visuelle, narration :
   **`FOG_NOMAD_IDENTITY_TENSION_0.5.md`**
@@ -12,6 +17,40 @@ d'autant plus que vous avez été avide.
 - Règles, paramètres, architecture et équilibrage d'origine : **`FOG_NOMAD_CORE_TEST_0.3.md`**
 - Résultats de jeu réels : **`CORE_TEST_RESULTS.md`**
 - Audit technique du moteur : **`AUDIT_PERFORMANCE_BUGS_0.2.md`**
+
+## Le prologue
+
+Le jeu ne commence plus par un joystick sur un monde vide.
+
+Vous êtes un **éclaireur**. Vous précédez un convoi nomade qui fuit la Brume
+depuis des générations : vous reconnaissez le terrain, vous atteignez les
+tours, vous activez les balises, vous confirmez que le convoi peut passer.
+
+Vous avez atteint votre tour. Vous avez activé la balise — le signal
+fonctionne encore, c'est la première chose que vous voyez. Puis la terre a
+tremblé, la tour vous a jeté au sol, et vous avez perdu connaissance.
+
+Le convoi n'a pas attendu. Il ne pouvait pas : la balise était activée, les
+éclaireurs travaillent en relais, et **on n'arrête pas un convoi quand la Brume
+avance**. Personne ne sait encore que vous êtes resté derrière.
+
+Le prologue ne dit rien de ce qu'est la Brume, et ne le dira pas. Il ne vous
+inflige pas d'amnésie de théâtre non plus : vous savez ce qu'est un arbre, une
+pierre, un feu — ce sont vos gestes de métier. Ce qui vous manque, ce sont les
+heures qui viennent de passer.
+
+Il ne vous bloque pas : le contrôle revient en moins d'une minute, et chaque
+étape s'ouvre sur ce que **vous** faites, jamais sur une minuterie qui vous
+attend. Aucun tutoriel n'est écrit : ramasser, peser, jeter, faire du feu
+s'apprennent en jouant, au moment où cela commence à coûter.
+
+Quand il a fini de parler, il se retire. Il n'y a **ni écran de chargement, ni
+coupure, ni fondu** : le monde procédural était là depuis le début, dessous.
+Le prologue ne touche ni au directeur de monde, ni à la génération de chunks,
+ni au déterminisme par graine.
+
+`?sansprologue` démarre directement dans le monde procédural.
+`?prologuetest` ajoute un panneau de conduite — voir `PROLOGUE_TEST_PLAN.md`.
 
 ## Le jeu
 

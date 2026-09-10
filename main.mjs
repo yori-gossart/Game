@@ -1,6 +1,6 @@
 import * as THREE from "./vendor/three/three.module.min.js";
 import { createFogNomad } from "./fognomad.mjs";
-import { bindRunUI, bindPerfOverlay, bindWorldTest } from "./fognomad-ui.mjs";
+import { bindRunUI, bindPerfOverlay, bindWorldTest, bindPrologueTest } from "./fognomad-ui.mjs";
 import { demarrerAudio, mettreAJourAudio, sons, audioDisponible } from "./audio.mjs";
 import { createWorldDirector, worldContext, WORLD } from "./worlddirector.mjs";
 import { createLiving, LIVING } from "./living.mjs";
@@ -9,6 +9,7 @@ import { appliquerUI, dispositionCourante, UI_DEFAUT } from "./ui.mjs";
 import { createAssetManager } from "./assetmanager.mjs";
 import { habillerJoueur } from "./joueur.mjs";
 import { createDecors, FAMILLES_ARBRES } from "./decors.mjs";
+import { createPrologue, ETAPES as ETAPES_PROLOGUE, SCENE as SCENE_PROLOGUE } from "./prologue.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -150,7 +151,12 @@ const SAVE_KEY = "horizon-proto-0.2-save";
 const PARAMS = new URLSearchParams(location.search);
 const DIAG = PARAMS.has("diag");
 const WORLDTEST = PARAMS.has("worldtest");
+const PROLOGUETEST = PARAMS.has("prologuetest");
 const FOGTEST = PARAMS.has("fogtest") || DIAG || WORLDTEST;
+/* Le prologue est l'ouverture normale du jeu. Les modes de mesure le sautent :
+   ils testent le monde procédural, pas la mise en scène, et une ouverture de
+   quarante secondes fausserait chacune de leurs mesures. */
+const SANS_PROLOGUE = FOGTEST || PARAMS.has("sansprologue");
 
 const diagVisible = {
   terrain: true, troncs: true, houppiers: true, rochers: true,
@@ -1357,6 +1363,60 @@ function depsDirecteur() {
   };
 }
 
+/* ---------------------------------------------------------------------------
+   ZONES SCÉNIQUES DU PROLOGUE
+
+   Le prologue pose une tour, un sac, des traces et un pilier à des endroits
+   précis. La végétation procédurale, elle, ne sait rien de tout cela : elle
+   plantait des conifères de sept mètres devant la tour, qui disparaissait
+   derrière eux au réveil. Le §8 demande une zone de départ MISE EN SCÈNE —
+   dégager ces emplacements en fait partie.
+
+   Le dégagement se décide AVANT que le chunk concerné ne se bâtisse. Pour les
+   deux scènes du départ, c'est immédiat : le point d'apparition est connu et
+   fixe (1,5 ; 1,5). Pour les deux scènes lointaines, le prologue déclare sa
+   zone au moment où il les pose, à 220 unités devant le joueur — soit bien
+   au-delà des 64 unités du rayon de streaming, donc bien avant que le moindre
+   chunk concerné n'existe.
+
+   Rien de tout cela ne touche au WorldDirector ni au déterminisme : on retire
+   des arbres à des coordonnées données, comme le ferait une clairière.
+--------------------------------------------------------------------------- */
+const DEPART = { x: 1.5, z: 1.5 };
+
+/**
+ * Zones où la végétation procédurale ne pousse pas, pour que la mise en scène
+ * du prologue soit visible. Sans elles, un conifère de sept mètres poussait
+ * devant la tour et l'ouverture du jeu était un tronc.
+ *
+ * La liste est MUTABLE, et c'est délibéré : le prologue pose ses deux scènes
+ * lointaines tardivement, à l'endroit où le joueur arrive réellement, et il
+ * ajoute alors sa zone. Cela fonctionne parce qu'un chunk consulte cette liste
+ * au moment où il est CONSTRUIT : à 220 unités devant, aucun des chunks
+ * concernés n'existe encore — le rayon de streaming est de 64 unités.
+ */
+const ZONES_DEGAGEES = SANS_PROLOGUE ? [] : [
+  // Le réveil et la tour : la plus grande, c'est la première image du jeu.
+  { x: DEPART.x + SCENE_PROLOGUE.tour.x * 0.5, z: DEPART.z + SCENE_PROLOGUE.tour.z * 0.5, r: 22 },
+  // Le sac, et la ligne de fuite juste devant.
+  { x: DEPART.x, z: DEPART.z - 14, r: 11 },
+];
+
+/** Le prologue déclare une zone dégagée au moment où il pose une scène. */
+function degagerZone(x, z, r) {
+  if (SANS_PROLOGUE) return;
+  ZONES_DEGAGEES.push({ x, z, r });
+}
+
+/** Un point est-il dans une zone mise en scène ? */
+function dansZoneScenique(x, z) {
+  for (const zn of ZONES_DEGAGEES) {
+    const dx = x - zn.x, dz = z - zn.z;
+    if (dx * dx + dz * dz < zn.r * zn.r) return true;
+  }
+  return false;
+}
+
 /**
  * Choisit un modèle d'arbre pour chaque emplacement déjà décidé par le moteur.
  *
@@ -1371,6 +1431,9 @@ function depsDirecteur() {
  */
 function arbresDuChunk(cx, cz, hauts, larges, morts) {
   const items = [];
+  const centerX = cx * CHUNK_SIZE + CHUNK_SIZE / 2;
+  const centerZ = cz * CHUNK_SIZE + CHUNK_SIZE / 2;
+  const degage = (it) => dansZoneScenique(centerX + it.x, centerZ + it.z);
 
   const choisir = (famille, i) => {
     const liste = FAMILLES_ARBRES[famille];
@@ -1379,6 +1442,7 @@ function arbresDuChunk(cx, cz, hauts, larges, morts) {
 
   // Conifères hauts : la masse verticale du paysage.
   hauts.forEach((it, i) => {
+    if (degage(it)) return;
     items.push({ cle: choisir("conifere_haut", i), x: it.x, y: it.y, z: it.z,
                  rotation: it.rotation, scale: it.scale * 0.78 });
   });
@@ -1386,6 +1450,7 @@ function arbresDuChunk(cx, cz, hauts, larges, morts) {
   // Conifères larges : remplacés par un mélange conifère dense / feuillu, pour
   // que deux arbres voisins ne soient plus le même cône à deux échelles.
   larges.forEach((it, i) => {
+    if (degage(it)) return;
     const feuillu = random01(cx * 31 + i, cz * 13 + i, 813) < 0.45;
     items.push({ cle: choisir(feuillu ? "feuillu" : "conifere_dense", i),
                  x: it.x, y: it.y, z: it.z,
@@ -1393,6 +1458,7 @@ function arbresDuChunk(cx, cz, hauts, larges, morts) {
   });
 
   morts.forEach((it, i) => {
+    if (degage(it)) return;
     items.push({ cle: choisir("mort", i), x: it.x, y: it.y, z: it.z,
                  rotation: it.rotation, scale: (it.scale || 1) * 0.5 });
   });
@@ -2682,15 +2748,19 @@ habillerJoueur({ player, assets, log: noterAsset })
    la seule façon d'éviter une bordure où la végétation change de style au
    milieu du monde. Le rebâtissage est GRATUIT en information : même graine,
    mêmes positions, seules les silhouettes changent. */
-decors.precharger()
+const decorPret = decors.precharger()
   .then((pret) => {
-    if (!pret) return;
+    if (!pret) return false;
     clearWorld();
     refreshChunks(true);
     noterAsset(`Décor appliqué — monde rebâti, ${decors.patrons.length} modèle(s), `
       + `atlas ${decors.atlas.join(" + ")}.`);
+    return true;
   })
-  .catch((e) => noterAsset(`Décor indisponible (${e.message}) — végétation procédurale conservée.`));
+  .catch((e) => {
+    noterAsset(`Décor indisponible (${e.message}) — végétation procédurale conservée.`);
+    return false;
+  });
 
 function animate() {
   requestAnimationFrame(animate);
@@ -2765,6 +2835,11 @@ function animate() {
   // Le monde vivant : animaux, oiseaux et nomades. Les comportements ne
   // tournent pas à 60 Hz — voir living.mjs.
   living.update(delta, game.state.fogZ, terrainHeight);
+
+  // Le prologue, tant qu'il a quelque chose à dire. `animate()` n'est appelée
+  // qu'après sa création : pas de garde nécessaire, et un `typeof` sur une
+  // const en zone morte lèverait au lieu de protéger.
+  prologue.update(delta);
 
   // Le son ne lit que des états déjà calculés : il ne décide de rien, et
   // le jeu tourne identiquement s'il est indisponible.
@@ -2879,6 +2954,7 @@ function animate() {
 
   if (updatePerf) updatePerf(reel);
   if (updateWorldTest) updateWorldTest(reel);
+  if (updatePrologueTest) updatePrologueTest(reel);
 
   renderer.render(scene, camera);
 
@@ -2944,6 +3020,36 @@ function recenserMonde() {
 }
 
 const updateWorldTest = WORLDTEST ? bindWorldTest(renderer, recenserMonde) : null;
+
+/* ---------------------------------------------------------------------------
+   PROLOGUE (0.7)
+
+   Il prend la main au démarrage, pose sa mise en scène autour du point de
+   départ, puis se retire. Il ne touche ni au WorldDirector, ni à la génération
+   de chunks : le monde procédural tourne dessous, inchangé.
+--------------------------------------------------------------------------- */
+const prologue = createPrologue({
+  THREE, scene, camera, player, game, decors, living,
+  terrainHeight, contaminable, sons, degagerZone, log: noterAsset,
+});
+
+// Panneau de conduite du prologue (§47). Il n'est ni construit ni relevé sans
+// le paramètre : un prologue de dix minutes ne se vérifie pas en le rejouant
+// onze fois pour atteindre la douzième étape.
+const updatePrologueTest = PROLOGUETEST
+  ? bindPrologueTest({ prologue, game, player, etapes: ETAPES_PROLOGUE })
+  : null;
+
+if (!SANS_PROLOGUE) {
+  // La tour du prologue est bâtie de pièces du décor : on attend leur arrivée
+  // plutôt que d'ouvrir le jeu sur une tour faite de rien. Le voile reste noir
+  // pendant ce temps, ce qui est exactement l'ouverture voulue — le §6 demande
+  // le son avant l'image.
+  //
+  // On attend la MÊME promesse que le rebâtissage du monde : relancer un
+  // préchargement rebâtirait les chunks une seconde fois pour rien.
+  decorPret.then(() => prologue.demarrer());
+}
 
 animate();
 
@@ -3360,6 +3466,24 @@ window.HORIZON = {
     };
   },
   get assets() { return { ...assets.etat, journal: journalAssets.slice() }; },
+  /** Sonde du prologue : étapes franchies, horodatage, acteurs, décor posé. */
+  get prologue() {
+    return {
+      actif: prologue.actif,
+      etape: prologue.etape,
+      franchies: prologue.franchies,
+      horodatage: prologue.horodatage,
+      temps: prologue.temps,
+      sacPris: prologue.sacPris,
+      cibleSac: prologue.cibleSac,
+      props: prologue.props,
+      acteurs: prologue.acteurs,
+      etapes: ETAPES_PROLOGUE,
+    };
+  },
+  sauterPrologue(nom) { return prologue.sauterA(nom); },
+  relancerPrologue() { prologue.demarrer(); },
+  finirPrologue() { prologue.terminer("sonde"); },
   /**
    * Inventaire des textures réellement en scène.
    *

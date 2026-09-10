@@ -593,6 +593,19 @@ export function createLiving(ctx) {
       }
       return { animaux, oiseaux, nomades, entites: actives.size };
     },
-    vider() { actives.clear(); parChunk.clear(); }
+    vider() { actives.clear(); parChunk.clear(); },
+    /**
+     * Patrons partagés, pour les acteurs mis en scène par le prologue.
+     *
+     * Le prologue a besoin d'animaux qui fuient à un moment PRÉCIS, sur une
+     * trajectoire décidée — pas d'animaux tirés au sort par chunk. Il les
+     * construit donc lui-même, mais avec ces géométries-ci : deux silhouettes
+     * différentes pour le même monde serait le défaut le plus visible qui soit.
+     */
+    get patrons() {
+      return { animalGeo, oiseauGeo,
+               nomadeCorpsGeo, nomadeTeteGeo, nomadeEcharpeGeo,
+               nomadeJambesGeo, nomadeSacGeo, materiaux: M };
+    }
   };
 }

@@ -180,6 +180,36 @@ export const sons = {
     souffle({ freq: 700, duree: 0.42, volume: 0.24, type: "bandpass" });
   },
 
+  /* ── Prologue (0.7) ───────────────────────────────────────────────────
+     Trois sons, et le doute comme principe. Le §13 est explicite : pas de
+     rugissement de monstre en continu. Ce qu'on entend doit pouvoir être le
+     vent — ou autre chose. C'est la question qui fait peur, pas la réponse. */
+
+  /** Réveil après la chute : acouphène qui s'efface, souffle, cœur. */
+  reveil() {
+    bip({ type: "sine", freq: 2400, freqFin: 1100, duree: 1.8, volume: 0.1 });
+    souffle({ freq: 320, duree: 2.4, volume: 0.22, type: "lowpass" });
+    bip({ type: "sine", freq: 62, freqFin: 44, duree: 1.2, volume: 0.3 });
+  },
+
+  /**
+   * Ce que la Brume rattrape. Un bruit sec, coupé net, puis rien.
+   *
+   * Le silence qui suit fait le travail : c'est l'absence de suite qui dit ce
+   * qui vient de se passer, pas le bruit lui-même. Volontairement ambigu —
+   * un craquement de bois autant qu'un cri.
+   */
+  disparition() {
+    souffle({ freq: 900, duree: 0.16, volume: 0.34, type: "bandpass" });
+    bip({ type: "sawtooth", freq: 420, freqFin: 90, duree: 0.22, volume: 0.2 });
+  },
+
+  /** Fragment de mémoire : une note lointaine, filtrée, comme sous l'eau. */
+  souvenir() {
+    bip({ type: "sine", freq: 520, freqFin: 380, duree: 1.4, volume: 0.16 });
+    souffle({ freq: 180, duree: 1.6, volume: 0.14, type: "lowpass" });
+  },
+
   /** Mort : une descente longue et sourde. */
   mort() {
     bip({ type: "sine", freq: 300, freqFin: 45, duree: 1.5, volume: 0.4 });

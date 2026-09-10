@@ -410,3 +410,118 @@ export function bindWorldTest(renderer, lireMonde) {
     pire = 0;
   };
 }
+
+/**
+ * Overlay ?prologuetest — conduire le prologue sans le rejouer.
+ *
+ * Le prologue dure une dizaine de minutes et ses quinze étapes s'enchaînent
+ * dans un seul ordre. Vérifier la douzième en la jouant coûte donc onze étapes
+ * à chaque essai, et c'est ainsi qu'on finit par ne plus la vérifier du tout.
+ *
+ * Ce panneau donne trois choses, et rien d'autre : ce que le prologue croit,
+ * un moyen d'aller directement à une étape, et un moyen de le refaire.
+ *
+ * Il ne CONTOURNE rien : `sauterA()` franchit réellement chaque étape
+ * intermédiaire, dans l'ordre, avec ses effets — le sac est ramassé, la Brume
+ * est relâchée, l'objectif est posé. Un saut qui se contenterait d'écrire un
+ * nom d'étape mentirait sur l'état du jeu, et le premier bug qu'il masquerait
+ * serait précisément celui qu'on cherchait.
+ */
+export function bindPrologueTest({ prologue, game, player, etapes }) {
+  const panel = document.createElement("div");
+  panel.id = "prologuetest";
+
+  // Le panneau complet couvre le joystick et les boutons d'action : les deux
+  // coins bas de l'écran leur appartiennent, et il n'y a pas de troisième
+  // coin. Un panneau de test qui empêche de jouer ne sert à rien — c'est très
+  // exactement le défaut de la 0.6, où le banc s'affichait sous l'écran de
+  // chargement et personne ne s'en apercevait avant l'appareil.
+  //
+  // Il s'ouvre donc, et se referme. Replié, il ne montre que sa lecture ;
+  // déplié, il montre ses commandes et masque celles du jeu, ce qui est un
+  // choix que le testeur fait au moment où il en a besoin.
+  const lecture = document.createElement("div");
+  lecture.className = "lecture";
+  lecture.onclick = () => panel.classList.toggle("ouvert");
+  lecture.title = "Toucher pour ouvrir ou fermer les commandes";
+  panel.appendChild(lecture);
+
+  const barre = document.createElement("div");
+  barre.className = "barre";
+  panel.appendChild(barre);
+
+  function bouton(texte, titre, faire) {
+    const b = document.createElement("button");
+    b.textContent = texte;
+    b.title = titre;
+    b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); faire(); };
+    barre.appendChild(b);
+    return b;
+  }
+
+  bouton("⟲", "Rejouer le prologue depuis le début", () => prologue.demarrer());
+  bouton("⏭", "Franchir l'étape suivante", () => {
+    const i = etapes.indexOf(prologue.etape);
+    if (i >= 0 && i < etapes.length - 1) prologue.sauterA(etapes[i + 1]);
+  });
+  // Les deux sauts qui coûtent le plus cher à rejouer : la structure ancienne
+  // est à 620 unités du départ, la sortie à 760.
+  bouton("⛏", "Sauter à la structure ancienne", () => {
+    prologue.sauterA("ANCIENT_STRUCTURE_FOUND");
+    // Le saut d'étape ne déplace pas le joueur : sans cela le bouton
+    // APPROCHER resterait invisible et l'étape suivante serait injouable.
+    //
+    // La destination est lue sur l'OBJET réellement posé, pas recalculée
+    // depuis SCENE : le pilier est ancré sur la position du joueur au réveil,
+    // et refaire le calcul depuis sa position courante viserait un point
+    // différent à chaque appui.
+    const pilier = window.HORIZON?.scene.getObjectByName("prologue-pilier-ancien");
+    if (pilier) window.HORIZON.teleport(pilier.position.x, pilier.position.z + 8);
+  });
+  bouton("✦", "Déclencher le pilier et la réaction de la Brume",
+         () => prologue.forcerPilier());
+  bouton("⇥", "Terminer : passer au monde procédural",
+         () => prologue.terminer("panneau de test"));
+
+  const listeEtapes = document.createElement("div");
+  listeEtapes.className = "etapes";
+  panel.appendChild(listeEtapes);
+  const pastilles = etapes.map((nom) => {
+    const el = document.createElement("span");
+    el.textContent = nom.replace(/_/g, " ").toLowerCase();
+    el.title = nom;
+    el.onclick = () => prologue.sauterA(nom);
+    listeEtapes.appendChild(el);
+    return el;
+  });
+
+  document.body.appendChild(panel);
+
+  let cumul = 0;
+  return function updatePrologueTest(delta) {
+    cumul += delta;
+    if (cumul < 0.25) return;
+    cumul = 0;
+
+    const p = prologue;
+    const s = game.state;
+    const objectif = document.getElementById("pro-objectif-texte")?.textContent || "—";
+
+    lecture.textContent =
+      `${p.actif ? "PROLOGUE ACTIF" : "monde procédural"}   ${p.temps.toFixed(1)} s\n` +
+      `étape   ${p.etape || "—"}   (${p.franchies.length}/${etapes.length})\n` +
+      `objectif   ${objectif}\n` +
+      `brume   ${game.fogGap.toFixed(0)} u devant   (z ${s.fogZ.toFixed(0)})\n` +
+      `joueur  z ${player.position.z.toFixed(0)}   parcouru ${s.distance.toFixed(0)} u\n` +
+      `sac     ${p.sacPris ? "pris" : "au sol"}   ${s.weight.toFixed(1)} kg   ` +
+      `${s.collected} ramassée(s)   ${s.firesLit} feu(x)\n` +
+      `décor   ${p.props.length} objet(s)   acteurs ${p.acteurs.filter((a) => a.vivant).length}` +
+      `/${p.acteurs.length}`;
+
+    for (let i = 0; i < pastilles.length; i++) {
+      const nom = etapes[i];
+      pastilles[i].className = p.franchies.includes(nom)
+        ? (nom === p.etape ? "courante" : "faite") : "";
+    }
+  };
+}

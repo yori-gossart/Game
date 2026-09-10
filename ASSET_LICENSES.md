@@ -104,7 +104,34 @@ dans `audio.mjs`, sans aucun fichier — décision de la 0.5, conservée.
 
 ---
 
-## 4. Ce qui n'a pas pu être vérifié, et n'est donc pas utilisé
+## 4. Le prologue (0.7) n'ajoute aucun asset externe
+
+Une version qui met en scène une tour-balise, un pilier ancien, des ornières de
+convoi et deux cristaux lumineux est exactement le genre de version où un
+modèle non vérifié se glisse « juste pour cette scène ». Il n'y en a aucun.
+
+| Élément mis en scène | D'où il vient |
+| --- | --- |
+| Tour-balise | pièces **déjà présentes** du pack Halloween : `pillar`, `fence_broken`, `grave_A_destroyed`, assemblées par `prologue.mjs` |
+| Plateforme et couronne de la tour | `CylinderGeometry` hexagonale, écrite dans `prologue.mjs` |
+| Cristaux de signal | `OctahedronGeometry` mise à l'échelle, écrite dans `prologue.mjs` |
+| Sac au sol | trois `BoxGeometry`, écrites dans `prologue.mjs` |
+| Traces du convoi | `BoxGeometry` pour les ornières, `bench` et `post_lantern` déjà présents |
+| Pilier ancien | `CylinderGeometry` à six pans et trois `TorusGeometry`, écrits dans `prologue.mjs` |
+| Animaux et silhouettes qui fuient | géométries de `living.mjs`, déjà en place depuis la 0.5 |
+| Sons du réveil, de la disparition, du souvenir | synthétisés dans `audio.mjs`, aucun fichier |
+
+Aucun fichier n'a été ajouté à `assets/`. Le contrôle est simple à refaire :
+
+```bash
+git diff --stat <version précédente>..HEAD -- assets/
+```
+
+Il doit ne rien renvoyer.
+
+---
+
+## 5. Ce qui n'a pas pu être vérifié, et n'est donc pas utilisé
 
 L'environnement de développement de cette session **n'atteint pas** kenney.nl,
 quaternius.com, poly.pizza, opengameart.org ni itch.io : la politique réseau les

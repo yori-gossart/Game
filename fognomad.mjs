@@ -1584,6 +1584,27 @@ export function createFogNomad(ctx) {
     canEat,
     eatRation,
     poserRation,
+    /**
+     * Recalcule le poids depuis l'inventaire, et rafraîchit le sac.
+     *
+     * Le poids est normalement tenu à jour par incréments, à chaque collecte
+     * et chaque abandon. Le prologue, lui, garnit l'inventaire d'un coup au
+     * moment où le joueur ramasse son sac : sans ce recalcul, il porterait
+     * quatre objets pour un poids de zéro, et la jauge mentirait dès la
+     * première minute de jeu.
+     */
+    recalculerPoids() {
+      let total = 0;
+      for (const [type, n] of Object.entries(state.inventory)) {
+        const spec = CONFIG.resources[type];
+        if (spec && n > 0) total += spec.weight * n;
+      }
+      state.weight = total;
+      state.maxWeight = Math.max(state.maxWeight, total);
+      updateBagVisual();
+      emit();
+      return total;
+    },
     get fireCount() { return activeFires.size; },
     die,
     weightRatio,

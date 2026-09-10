@@ -1,8 +1,8 @@
 # Tests
 
-Sept suites exécutées sur Chromium en émulation Pixel 7 avec entrées tactiles,
+Huit suites exécutées sur Chromium en émulation Pixel 7 avec entrées tactiles,
 une suite qui tourne en Node pur, plus un simulateur d'équilibrage sans
-navigateur. **279 vérifications au total.**
+navigateur.
 
 | Suite | Vérifications | Couvre |
 | --- | --- | --- |
@@ -14,6 +14,8 @@ navigateur. **279 vérifications au total.**
 | `balance05.mjs` | 36 | Fog Nomad 0.5 : distribution des ressources, courbe de pression, bandes de marge, run longue, qualité |
 | `world05.mjs` | 19 | Living World 0.5 : distribution du directeur de monde, déterminisme, 500 chunks — **sans navigateur** |
 | `ui05.mjs` | 47 | Living World 0.5 : modes de jeu, disposition du HUD, menu de sac, ration, `?worldtest` |
+| `art06.mjs` | 35 | 0.6 / 0.6a : visibilité du banc, assets, orientation du modèle, ancrage du sac, rigidité |
+| `prologue07.mjs` | 45 | 0.7 : le prologue **joué** d'un bout à l'autre, trois profils, quinze points de contrôle |
 | `simulate05.mjs` | — | quatre profils de jeu simulés sur la vraie `CONFIG`, sans navigateur |
 
 ## Lancer
@@ -27,6 +29,9 @@ node tests/fog04.mjs
 node tests/regressions.mjs
 node tests/balance05.mjs
 node tests/ui05.mjs
+node tests/art06.mjs
+node tests/prologue07.mjs               # les trois parcours : ~40 min d'horloge
+PROFILS=normal node tests/prologue07.mjs   # un seul parcours, pour itérer
 node tests/world05.mjs         # pas de navigateur, exécution directe
 node tests/simulate05.mjs      # pas de navigateur, exécution directe
 ```
@@ -63,6 +68,19 @@ séquentielles.
 trois, et conclure d'un échantillon de 3 revient à mesurer le hasard. Les
 tests qui portent sur sa répartition balayent le monde jusqu'à disposer d'un
 échantillon utilisable, et vérifient d'abord qu'ils l'ont.
+
+**`prologue07.mjs` JOUE, il ne lit pas.** Un pilote installé dans la page tient
+le joystick image par image, se dirige vers le sac, appuie sur les boutons,
+ramasse, jette quand le sac pèse, brûle son bois et court quand la marge se
+resserre. Il ne saute aucune étape : `sauterA()` serait bien plus rapide et ne
+prouverait rien, parce que la question posée est « combien de temps met-on à
+traverser » et qu'une étape sautée ne dure rien.
+
+Trois défauts sont sortis de là, et aucun n'était visible en lisant l'état du
+jeu : une condition de sortie qui valait `NaN` et empêchait le prologue de se
+terminer, un kit de départ identique à la recette du feu qui mettait deux beats
+dans le désordre, et un joueur tué par un sac qu'il n'avait jamais choisi de
+remplir. Voir `FOG_NOMAD_0.7_PROLOGUE.md`, §7.
 
 **`simulate05.mjs` ne prouve pas que le jeu est intéressant.** Un modèle
 n'hésite pas, ne se lasse pas, ne change pas d'avis. Il sert à détecter un
