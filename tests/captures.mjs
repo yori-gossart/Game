@@ -39,7 +39,14 @@ async function ouvrir(params) {
   const page = await browser.newPage({ ...devices["Pixel 7"] });
   page.on("pageerror", (e) => erreurs.push(String(e)));
   page.on("console", (m) => { if (m.type() === "error") erreurs.push(m.text()); });
-  await page.goto(`${BASE}/index.html${params}`, { waitUntil: "load", timeout: 90000 });
+  // QUALITÉ IMPOSÉE. SwiftShader rend à une dizaine d'images par seconde ;
+  // l'adaptation automatique, qui ne sait pas qu'elle tourne en logiciel,
+  // descendait en deux paliers jusqu'à `basse` — décor à zéro, aucune herbe,
+  // nappes de brume arrière coupées. Toutes les captures antérieures au
+  // 12/09 photographiaient donc un monde dégradé. On fige le niveau : un banc
+  // qui mesure autre chose que ce qu'on croit est pire que pas de banc.
+  const url = `${BASE}/index.html${params}${params ? "&" : "?"}qualite=${QUALITE}`;
+  await page.goto(url, { waitUntil: "load", timeout: 90000 });
   await page.waitForFunction(() => window.HORIZON?.pos, null, { timeout: 120000 });
   return page;
 }
@@ -53,6 +60,7 @@ async function attendreDecor(page) {
   await page.waitForTimeout(2500);
 }
 
+const QUALITE = process.env.QUALITE || "haute";
 const plans = [];
 
 async function capturer(page, nom) {
@@ -67,12 +75,14 @@ async function capturer(page, nom) {
     etape: window.HORIZON.prologue?.etape || "—",
     yaw: +window.HORIZON.yaw.toFixed(2),
     gap: Math.round(window.HORIZON.fogGap),
+    qualite: window.HORIZON.info.qualite,
+    decor: window.HORIZON.info.decor,
   }));
   plans.push({ nom, ...info });
   console.log(`   ${nom.padEnd(22)} ${String(info.calls).padStart(3)} calls  `
     + `${String(info.tris).padStart(6)} tris  ${String(info.geo).padStart(3)} géo  `
     + `${info.tex} tex  lacet ${String(info.yaw).padStart(5)}  brume ${String(info.gap).padStart(4)}  `
-    + `${info.etape}`);
+    + `q:${info.qualite}/${info.decor}  ${info.etape}`);
   return chemin;
 }
 

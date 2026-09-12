@@ -42,7 +42,27 @@ const PIXEL_RATIO_STEPS = [1.35, 1.15, 1.0];
 // génération du premier chunk lit `facteurDecor()` : les déclarer plus bas
 // mettait `qualite` dans sa zone morte temporelle et empêchait le démarrage.
 const QUALITE_NIVEAUX = ["haute", "moyenne", "basse"];
-let qualite = 0;
+
+/**
+ * `?qualite=haute|moyenne|basse` — FIGE le niveau et coupe l'adaptation.
+ *
+ * Le §59 demande des niveaux explicites, mais ce paramètre a d'abord réparé
+ * le banc de captures, et le défaut qu'il a mis au jour vaut d'être écrit :
+ *
+ * SwiftShader tourne à une dizaine d'images par seconde. L'adaptation, qui ne
+ * sait pas qu'elle rend en logiciel, descendait donc en deux paliers jusqu'à
+ * `basse` — `facteurDecor()` à ZÉRO, aucune herbe, aucune fleur, les nappes de
+ * brume arrière coupées. Toutes les captures de la 0.7.2 photographiaient un
+ * monde dégradé, et le couvert bas qu'on cherchait à voir n'était tout
+ * simplement pas construit. Un banc de mesure qui mesure autre chose que ce
+ * qu'on croit est pire que pas de banc.
+ */
+const QUALITE_IMPOSEE = (() => {
+  const v = new URLSearchParams(location.search).get("qualite");
+  const i = QUALITE_NIVEAUX.indexOf(v);
+  return i >= 0 ? i : null;
+})();
+let qualite = QUALITE_IMPOSEE ?? 0;
 
 /** Densité de décor, appliquée à la génération des chunks. */
 function facteurDecor() {
@@ -743,15 +763,31 @@ const bushGeometry = (() => {
   return faceted(g);
 })();
 
-/** Touffe d'herbe : trois lames croisées, pour le couvert bas. */
+/**
+ * Touffe d'herbe : quatre lames croisées, pour le couvert bas.
+ *
+ * 0.7.2 — ELLE FAISAIT QUARANTE-QUATRE CENTIMÈTRES.
+ *
+ * Le sol du jeu est facetté par plaques de deux mètres et la caméra le regarde
+ * de haut, à une douzaine de mètres : une touffe de 0,44 u y occupait trois
+ * pixels. Le couvert bas existait dans le code depuis la 0.5 et n'avait jamais
+ * été visible sur une seule capture — le même défaut que la crête de brume,
+ * les bandes de ciel et le relief du terrain. Elle monte au genou du
+ * personnage (qui fait 1,7 u), et les lames sont ouvertes : quatre lames
+ * ouvertes coûtent DOUZE triangles là où trois lames fermées en coûtaient
+ * dix-huit. Plus grande et moins chère.
+ */
 const grassGeometry = (() => {
   const parts = [];
-  for (let i = 0; i < 3; i++) {
-    const g = new THREE.ConeGeometry(0.07, 0.44, 3);
-    g.translate(0, 0.22, 0);
-    g.rotateZ((i - 1) * 0.28);
-    g.rotateY(i * 2.1);
-    g.translate((i - 1) * 0.09, 0, (i - 1) * 0.06);
+  for (let i = 0; i < 4; i++) {
+    // Basse et large. La première version montait au genou et se lisait comme
+    // un champ d'agaves : une touffe d'herbe arrive à la cheville.
+    const h = 0.46 + (i % 2) * 0.16;
+    const g = new THREE.ConeGeometry(0.17, h, 3, 1, true);
+    g.translate(0, h / 2, 0);
+    g.rotateZ((i - 1.5) * 0.34);
+    g.rotateY(i * 1.7);
+    g.translate((i - 1.5) * 0.12, 0, ((i % 3) - 1) * 0.11);
     parts.push(g);
   }
   const merged = mergeGeometries(parts);
@@ -1842,7 +1878,9 @@ function createChunk(cx, cz) {
     } else if (type < biome.density + 0.14) {
       arbustes.push({ x: localX, y, z: localZ, rotation,
                       scale: 0.65 + random01(cx + i, cz - i, 93) * 0.55, biomeIndex });
-    } else if (type < biome.density + 0.3) {
+    } else if (type < biome.density + 0.46) {
+      // Part relevée en 0.7.2 : le couvert bas était le seul étage du décor
+      // qui manquait complètement à la capture, entre le sol nu et les arbres.
       if (i % 4 < facteurDecor() * 4) {
         herbes.push({ x: localX, y, z: localZ, rotation,
                       scale: 0.75 + random01(cx + i, cz - i, 91) * 0.6, biomeIndex });
@@ -1851,6 +1889,55 @@ function createChunk(cx, cz) {
       rocks.push({ x: localX, y, z: localZ,
                    scale: 0.38 + random01(cx - i * 5, cz + i * 3, 72) * 0.82,
                    seed: random01(i, cx + cz, 75) });
+    }
+  }
+
+  /* --- LE COUVERT BAS (§35) --------------------------------------------
+   *
+   * La boucle ci-dessus produisait environ HUIT touffes par chunk de 32x32 :
+   * une pour cent-trente mètres carrés. L'herbe existait dans le code depuis
+   * la 0.5 et n'apparaissait sur aucune capture — entre le sol nu et les
+   * arbres, l'étage intermédiaire du paysage était simplement absent.
+   *
+   * Cette passe-ci est dédiée et dense : une grille jitterée de 2,6 unités,
+   * soit une centaine de touffes par chunk. Ça ne tient au budget que parce
+   * que le couvert bas n'est AFFICHÉ que sur les chunks voisins du joueur
+   * (voir `majCouvertBas`) : au-delà d'une quarantaine de mètres une touffe
+   * fait moins d'un pixel, et la payer serait payer pour rien.
+   */
+  if (facteurDecor() > 0) {
+    const PAS = 2.6;
+    const n = Math.floor(CHUNK_SIZE / PAS);
+    for (let gi = 0; gi < n; gi++) {
+      for (let gj = 0; gj < n; gj++) {
+        const jx = random01(cx * 211 + gi * 7, cz * 173 + gj * 11, 301) - 0.5;
+        const jz = random01(cx * 149 - gj * 5, cz * 197 + gi * 13, 303) - 0.5;
+        const localX = -CHUNK_SIZE / 2 + (gi + 0.5) * PAS + jx * PAS * 0.85;
+        const localZ = -CHUNK_SIZE / 2 + (gj + 0.5) * PAS + jz * PAS * 0.85;
+        const wx = centerX + localX, wz = centerZ + localZ;
+        const y = terrainHeight(wx, wz);
+        if (y < -2.0) continue;                     // pas d'herbe dans l'eau
+
+        const bi = dominantBiomeIndex(wx, wz);
+        // Par PLAQUES, pas uniformément : deux ondes lentes creusent des
+        // trouées et épaississent des touffes. Une densité constante se lit
+        // comme une moquette, et c'est ce que la première capture montrait.
+        const plaque = 0.5
+          + 0.32 * Math.sin(wx * 0.11 + wz * 0.07)
+          + 0.22 * Math.sin(wz * 0.19 - wx * 0.13);
+        const dense = random01(cx * 89 + gi, cz * 61 + gj, 305);
+        // Le biome décide de la densité, et un sol sec reste sec.
+        if (dense > (0.12 + BIOMES[bi].density * 0.68) * plaque) continue;
+        if (dense > facteurDecor()) continue;
+
+        herbes.push({
+          x: localX, y, z: localZ,
+          rotation: random01(cx + gi * 3, cz - gj * 7, 307) * Math.PI * 2,
+          scale: 0.7 + random01(cx - gi, cz + gj, 309) * 0.62,
+          biomeIndex: bi,
+          clair: random01(cx + gj * 5, cz - gi * 3, 311),
+        });
+      }
     }
   }
 
@@ -1965,6 +2052,11 @@ function createChunk(cx, cz) {
   // expliqué. La 0.5 avait rétabli ce profil sans y penser. Le chemin fusionné
   // coûte le même nombre d'appels de rendu, et c'est celui qui a été validé
   // sur l'appareil.
+  // La teinte des houppiers était trop sombre pour de l'herbe : au sol, elle
+  // faisait des taches noires. Chaque touffe tire un peu vers le jaune-vert,
+  // et pas toutes de la même quantité.
+  const HERBE_CLAIRE = new THREE.Color(0x9cb356);
+  const teinteHerbe = new THREE.Color();
   const grassMesh = buildMerged(
     grassGeometry, crownMaterial, herbes,
     (obj, item) => {
@@ -1972,7 +2064,8 @@ function createChunk(cx, cz) {
       obj.rotation.set(0, item.rotation, 0);
       obj.scale.setScalar(item.scale);
     },
-    (item) => biomeTreeColors[item.biomeIndex]
+    (item) => teinteHerbe.copy(biomeTreeColors[item.biomeIndex])
+      .lerp(HERBE_CLAIRE, 0.34 + (item.clair ?? 0.5) * 0.42)
   );
 
   const rockMesh = buildInstanced(
@@ -2330,6 +2423,8 @@ function refreshChunks(force = false) {
       chunks.delete(chunkKey);
     }
   }
+
+  majCouvertBas();
 }
 
 /**
@@ -2345,7 +2440,35 @@ function processBuildQueue(budget = 1) {
     built++;
   }
 
+  if (built) majCouvertBas();
   return built;
+}
+
+/**
+ * Le couvert bas n'est affiché que près du joueur.
+ *
+ * Une centaine de touffes par chunk sur quarante-neuf chunks, ce serait
+ * soixante mille triangles pour une bande d'herbe qui, passé une quarantaine
+ * de mètres, ne couvre plus un pixel. Sur les neuf chunks voisins, c'est une
+ * dizaine de milliers — et c'est tout ce que la caméra voit.
+ *
+ * Chunk-granulaire, donc appelé au franchissement de frontière et après
+ * chaque construction : pas une seule fois par image.
+ */
+const CHUNKS_COUVERT = 1;
+
+function majCouvertBas() {
+  const cx = Math.floor(player.position.x / CHUNK_SIZE);
+  const cz = Math.floor(player.position.z / CHUNK_SIZE);
+  for (const [key, group] of chunks) {
+    const virgule = key.indexOf(",");
+    const gx = +key.slice(0, virgule), gz = +key.slice(virgule + 1);
+    const proche = Math.abs(gx - cx) <= CHUNKS_COUVERT
+                && Math.abs(gz - cz) <= CHUNKS_COUVERT;
+    for (const child of group.children) {
+      if (child.userData.kind === "herbes") child.visible = proche && diagVisible.herbes;
+    }
+  }
 }
 
 function flushBuildQueue() {
@@ -2353,6 +2476,7 @@ function flushBuildQueue() {
     const next = buildQueue.shift();
     createChunk(next.cx, next.cz);
   }
+  majCouvertBas();
 }
 
 function clearWorld() {
@@ -2871,6 +2995,8 @@ function appliquerQualite() {
 }
 
 function updateAdaptiveResolution(delta) {
+  // Niveau imposé : on ne touche plus à rien, ni au décor ni à la résolution.
+  if (QUALITE_IMPOSEE !== null) return;
   fpsWindowTime += delta;
   fpsWindowFrames++;
 
@@ -3042,7 +3168,11 @@ function animate() {
   mettreAJourAudio(delta, {
     marge: game.fogGap,
     marche: moving,
-    course: sprinting
+    course: sprinting,
+    // Les cristaux bourdonnent, et le bourdonnement vient de leur côté. Le
+    // prologue est le seul à savoir où ils sont ; l'audio ne connaît que des
+    // distances et des angles.
+    balises: prologue.balisesSonores ? prologue.balisesSonores() : []
   });
 
   // Étalement de la génération sur plusieurs images.
@@ -3469,7 +3599,13 @@ window.HORIZON = {
       tris: renderer.info.render.triangles,
       geometries: renderer.info.memory.geometries,
       textures: renderer.info.memory.textures,
-      programs: renderer.info.programs?.length ?? -1
+      programs: renderer.info.programs?.length ?? -1,
+      // Le niveau de qualité EFFECTIF, et s'il est imposé. Sans cette ligne,
+      // le banc de captures a photographié le monde en qualité basse sans que
+      // personne s'en aperçoive — un chiffre invisible reste un chiffre faux.
+      qualite: QUALITE_NIVEAUX[qualite],
+      qualiteImposee: QUALITE_IMPOSEE !== null,
+      decor: facteurDecor()
     };
   },
   get objectsInScene() { let n = 0; scene.traverse(() => n++); return n; },
