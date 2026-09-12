@@ -76,6 +76,10 @@ const SKY_ZENITH      = new THREE.Color(0x3f6f9c);
 const SKY_AVANT       = new THREE.Color(0xf0d9b4);   // −Z : l'horizon d'espoir
 const SKY_ARRIERE     = new THREE.Color(0x6a5f7d);   // +Z : déjà contaminé
 const SKY_ZENITH_BACK = new THREE.Color(0x2e2a42);
+/* La lueur rasante juste au-dessus du sol. Chaude devant, elle porte le §24 :
+   la direction de fuite est plus claire et plus chaude que celle de la Brume,
+   et le joueur doit pouvoir le sentir sans qu'on le lui dise. */
+const HORIZON_GLOW    = new THREE.Color(0xffe9c4);
 
 /**
  * LE CIEL — et pourquoi la 0.7.1 n'y a rien laissé.
@@ -108,7 +112,11 @@ const SKY_ZENITH_BACK = new THREE.Color(0x2e2a42);
  * atmosphérique plutôt que le ciel lui-même.
  */
 const skyDome = (() => {
-  const geometry = new THREE.SphereGeometry(1, 32, 14, 0, Math.PI * 2, 0, Math.PI * 0.55);
+  // 40 × 28 : la moitié des anneaux verticaux tombe désormais dans les quinze
+  // premiers degrés, parce que c'est là que tout se joue. Une bande portée par
+  // des sommets ne peut pas être plus fine que la maille qui la porte, et la
+  // maille précédente n'avait que deux anneaux dans le ciel visible.
+  const geometry = new THREE.SphereGeometry(1, 40, 28, 0, Math.PI * 2, 0, Math.PI * 0.55);
   const position = geometry.attributes.position;
   const colors = new Float32Array(position.count * 3);
   const bas = new THREE.Color();
@@ -128,13 +136,48 @@ const skyDome = (() => {
     bas.copy(SKY_AVANT).lerp(SKY_ARRIERE, doux);
     haut.copy(SKY_ZENITH).lerp(SKY_ZENITH_BACK, doux);
 
-    // 0 à l'horizon, 1 au zénith, avec une transition resserrée vers le bas.
-    const t = Math.pow(y, 0.62);
+    /* 0.7.2 — LE DÉGRADÉ EST COMPRIMÉ DANS LA BANDE QU'ON VOIT.
+     *
+     * L'exposant valait 0,62 : la couleur de zénith n'arrivait qu'à trente
+     * degrés au-dessus de l'horizon. Or l'inclinaison de la caméra est bornée
+     * à 0,12 et vaut 0,5 en jeu — le haut du cadre se situe entre un demi-degré
+     * et quinze degrés d'élévation selon le plan. Tout le dégradé se jouait
+     * hors champ, et le joueur ne voyait qu'un aplat crème.
+     *
+     * C'est la même erreur d'échelle que le terrain et que la crête de brume,
+     * pour la troisième version consécutive. À 0,34, la moitié du dégradé tient
+     * dans les huit premiers degrés — c'est-à-dire dans le ciel qui existe.
+     */
+    const t = Math.pow(y, 0.34);
     tint.copy(bas).lerp(haut, t);
 
-    colors[i * 3] = tint.r;
-    colors[i * 3 + 1] = tint.g;
-    colors[i * 3 + 2] = tint.b;
+    /* LA BANDE D'HORIZON. Un ciel réel s'éclaircit juste au-dessus du sol :
+     * c'est la première chose que l'œil lit, et elle donne une profondeur que
+     * le dégradé seul n'a pas. Elle s'éteint en quatre degrés. */
+    const rasant = Math.pow(Math.max(0, 1 - y / 0.075), 2);
+    tint.lerp(HORIZON_GLOW, rasant * 0.55 * (1 - doux * 0.75));
+
+    /* LES NUAGES, et cette fois dans la bande visible.
+     *
+     * La 0.7.1 avait essayé et retiré des bandes nuageuses : leur enveloppe les
+     * éteignait exactement au ras de l'horizon, c'est-à-dire là où le joueur
+     * regarde. Elles vivent maintenant entre deux et quatorze degrés, avec une
+     * amplitude qui se voit. Elles sont plus denses vers l'arrière : le ciel
+     * s'épaissit du côté de la Brume et s'ouvre devant, ce qui est la seule
+     * chose que ce jeu dise jamais d'une direction sans écrire un mot.
+     */
+    const azimut = Math.atan2(position.getX(i), z);
+    const bande =
+      Math.sin(y * 41 + azimut * 1.7) * 0.46 +
+      Math.sin(y * 23 - azimut * 0.9) * 0.34 +
+      Math.sin(y * 71 + azimut * 2.6) * 0.20;
+    const dansLaBande = Math.max(0, Math.sin(Math.min(1, y / 0.24) * Math.PI));
+    const force = 0.16 * dansLaBande * (0.6 + doux * 0.85);
+    tint.multiplyScalar(1 + bande * force);
+
+    colors[i * 3] = Math.min(1, tint.r);
+    colors[i * 3 + 1] = Math.min(1, tint.g);
+    colors[i * 3 + 2] = Math.min(1, tint.b);
   }
 
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
