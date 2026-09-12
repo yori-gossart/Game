@@ -618,28 +618,94 @@ export function createPrologue(deps) {
    * Une seule géométrie, une seule passe de rendu, couleurs par sommet : c'est
    * le même langage que le terrain, et ça reste un appel de dessin.
    */
+  const PAS_TERRAIN = 2;               // le pas de la grille du terrain
+
+  /**
+   * La hauteur DU MAILLAGE, pas celle de la fonction.
+   *
+   * Le terrain est une grille de 2 unités : entre deux sommets, la surface
+   * rendue est un plan, pas la courbe de `terrainHeight`. Une marque
+   * échantillonnée sur la courbe passe donc alternativement au-dessus et
+   * au-dessous du sol visible — et se découpe en tronçons, ce que la première
+   * capture des ornières montrait très bien. On interpole comme le maillage.
+   */
+  function hauteurMaillage(wx, wz) {
+    const P = PAS_TERRAIN;
+    const x0 = Math.floor(wx / P) * P, z0 = Math.floor(wz / P) * P;
+    const tx = (wx - x0) / P, tz = (wz - z0) / P;
+    const a = sol(x0, z0), b = sol(x0 + P, z0);
+    const c = sol(x0, z0 + P), d = sol(x0 + P, z0 + P);
+    return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+  }
+
+  /**
+   * Une NAPPE plaquée au sol : terre battue, dalle de pierre, cendre.
+   *
+   * Construite sur la grille du terrain et alignée sur les coordonnées paires
+   * du monde, elle épouse exactement le relief rendu. `champ(u, v)` décide, en
+   * coordonnées locales, ce que vaut chaque point : une valeur > 0 pose de la
+   * matière, et `couleur(a, u, v)` la teinte. Le bord est donc irrégulier sans
+   * qu'on ait à le dessiner, et il ne coûte rien.
+   *
+   * L'enroulement des triangles est celui qu'on voit de DESSUS. La première
+   * version tournait à l'envers : la normale pointait vers le bas, la nappe
+   * était éliminée par le culling, et elle ne se voyait nulle part.
+   */
+  function nappeAuSol(cx, cz, y0, demiU, demiV, champ, couleur, pos, col,
+                      { hauteur = 0.04, penteMax = 1.5 } = {}) {
+    const P = PAS_TERRAIN;
+    const u0 = Math.ceil((cx - demiU) / P) * P - cx;
+    const v0 = Math.ceil((cz - demiV) / P) * P - cz;
+    const NU = Math.round((demiU * 2) / P), NV = Math.round((demiV * 2) / P);
+    const C = new THREE.Color();
+
+    for (let i = 0; i < NU; i++) {
+      for (let j = 0; j < NV; j++) {
+        const a = u0 + i * P, b = v0 + j * P;
+        const coins = [[a, b], [a + P, b], [a + P, b + P], [a, b + P]];
+        const vals = coins.map(([p, q]) => champ(p, q));
+        if (Math.max(...vals) <= 0.02) continue;
+
+        const hs = coins.map(([p, q]) => hauteurMaillage(cx + p, cz + q) - y0);
+        // Pas de nappe sur une paroi : la capture y montrait des pans dressés
+        // à la verticale, et un convoi ne campe pas sur un talus.
+        if (Math.max(...hs) - Math.min(...hs) > penteMax) continue;
+
+        for (const [m, n, o] of [[0, 2, 1], [0, 3, 2]]) {
+          for (const k of [m, n, o]) {
+            pos.push(coins[k][0], hs[k] + hauteur, coins[k][1]);
+            couleur(C, vals[k], coins[k][0], coins[k][1]);
+            col.push(C.r, C.g, C.b);
+          }
+        }
+      }
+    }
+  }
+
+  /** Le matériau des nappes : celui du terrain, pour qu'elles en fassent
+      partie au lieu d'y être collées. */
+  function materiauNappe() {
+    const mat = new THREE.MeshLambertMaterial({
+      vertexColors: true,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    });
+    contaminable(mat);      // elle grise devant la brume, comme le reste
+    return mat;
+  }
+
+  function geometrieNappe(pos, col) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+    geo.computeVertexNormals();
+    return geo;
+  }
+
   function solPietine(cx, cz, y0) {
     const pos = [];
     const col = [];
     const C = new THREE.Color();
-    const PAS = 2;                     // le pas de la grille du terrain
-
-    /**
-     * La hauteur DU MAILLAGE, pas celle de la fonction.
-     *
-     * Le terrain est une grille de 2 unités : entre deux sommets, la surface
-     * rendue est un plan, pas la courbe de `terrainHeight`. Une ornière
-     * échantillonnée sur la courbe passe donc alternativement au-dessus et
-     * au-dessous du sol visible — et se découpe en tronçons, ce que la
-     * première capture montrait très bien. On interpole comme le maillage.
-     */
-    const hMaille = (wx, wz) => {
-      const x0 = Math.floor(wx / PAS) * PAS, z0 = Math.floor(wz / PAS) * PAS;
-      const tx = (wx - x0) / PAS, tz = (wz - z0) / PAS;
-      const a = sol(x0, z0), b = sol(x0 + PAS, z0);
-      const c = sol(x0, z0 + PAS), d = sol(x0 + PAS, z0 + PAS);
-      return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz - y0;
-    };
+    const hMaille = (wx, wz) => hauteurMaillage(wx, wz) - y0;
 
     /** Usure de la terre en un point local. > 0 : le convoi est passé. */
     const usure = (u, v) => {
@@ -653,36 +719,8 @@ export function createPrologue(deps) {
       .lerp(CAMP.terre, Math.min(1, Math.max(0, a * 1.7)));
 
     // --- la nappe de terre battue, sur la grille du terrain ---------------
-    const u0 = Math.ceil((cx - 11) / PAS) * PAS - cx;
-    const v0 = Math.ceil((cz - 14) / PAS) * PAS - cz;
-    const NU = Math.round(22 / PAS), NV = Math.round(28 / PAS);
-
-    for (let i = 0; i < NU; i++) {
-      for (let j = 0; j < NV; j++) {
-        const a = u0 + i * PAS, b = v0 + j * PAS;
-        const coins = [[a, b], [a + PAS, b], [a + PAS, b + PAS], [a, b + PAS]];
-        const us = coins.map(([p, q]) => usure(p, q));
-        if (Math.max(...us) <= 0.02) continue;      // bord irrégulier, gratuit
-
-        const hs = coins.map(([p, q]) => hMaille(cx + p, cz + q));
-        // Pas de terre battue sur une paroi : la capture y montrait des pans
-        // bruns dressés à la verticale, et un convoi ne campe pas sur un talus.
-        if (Math.max(...hs) - Math.min(...hs) > 1.5) continue;
-
-        const s = coins.map(([p, q], k) => [p, hs[k] + 0.04, q, us[k]]);
-        // Enroulement : vu de dessus, les sommets doivent tourner dans le sens
-        // trigonométrique, sinon la normale pointe vers le bas — la nappe est
-        // alors éliminée par le culling et ne se voit NULLE PART. C'est
-        // exactement ce qui s'est passé à la première capture.
-        for (const [m, n, o] of [[0, 2, 1], [0, 3, 2]]) {
-          for (const k of [m, n, o]) {
-            pos.push(s[k][0], s[k][1], s[k][2]);
-            teinte(s[k][3]);
-            col.push(C.r, C.g, C.b);
-          }
-        }
-      }
-    }
+    nappeAuSol(cx, cz, y0, 11, 14, usure,
+               (c, a) => { teinte(a); c.copy(C); }, pos, col);
 
     /** Un ruban plaqué au sol : suite de quads échantillonnés sur le maillage.
         Il s'arrête là où la terre battue s'arrête — une ornière qui continue
@@ -741,21 +779,8 @@ export function createPrologue(deps) {
       }
     }
 
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-    geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
-    geo.computeVertexNormals();
-
-    // Le MÊME matériau que le terrain — Lambert, couleurs par sommet : une
-    // terre battue en Standard répondait autrement à la lumière et se lisait
-    // comme un autocollant posé sur l'herbe.
-    const mat = new THREE.MeshLambertMaterial({
-      vertexColors: true,
-      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-    });
-    contaminable(mat);                 // la terre grise devant la brume, comme le reste
-
-    const mesh = new THREE.Mesh(geo, mat);
+    const mesh = new THREE.Mesh(geometrieNappe(pos, col), materiauNappe());
+    mesh.userData.ownedGeometry = true;
     mesh.name = "camp-sol";
     return mesh;
   }
@@ -975,54 +1000,150 @@ export function createPrologue(deps) {
   /**
    * LE PILIER ANCIEN.
    *
-   * Il ne doit ressembler à AUCUNE tour d'éclaireur. Là où la tour est faite de
-   * piliers droits et d'une arche posée dessus — une construction qu'on
-   * comprend —, celui-ci est monolithique, incliné, sans joint visible, et son
-   * cristal est enchâssé dans la pierre au lieu d'être suspendu.
+   * Il ne doit ressembler à AUCUNE tour d'éclaireur, et la première version
+   * échouait à la capture : un poteau noir de six mètres, coupé par le haut du
+   * cadre, dans la même pierre grise que tout le reste. Un joueur y voit un
+   * poteau télégraphique, pas une énigme.
    *
-   * Le §28 demande que la contradiction naisse de l'architecture. On ne dit
-   * donc jamais « ceci n'est pas une balise d'éclaireur » comme un constat de
-   * jeu : le personnage le pense, une fois, et l'objet le montre.
+   * Le §31 demande ancien, mystérieux, inhabituel, pré-nomade — et une
+   * géométrie, une palette et une lumière DIFFÉRENTES. Ce qui distingue donc
+   * cette structure de tout le reste du monde :
+   *
+   *   — la pierre est PÂLE, presque de l'os, là où le monde est brun et vert ;
+   *   — la lumière est VIOLETTE, là où la balise moderne est cyan ;
+   *   — les nomades construisent droit et horizontal ; ici tout PENCHE VERS LE
+   *     CENTRE, et rien ne repose sur rien ;
+   *   — le cristal flotte DANS une ouverture, sans être tenu. C'est ce détail
+   *     qui rend l'objet impossible à avoir bâti, et c'est là que naît la
+   *     contradiction que le §28 demande — sans une ligne de texte.
+   *
+   * La dalle au sol est ce qui le rend visible de loin : une pierre claire au
+   * milieu de l'herbe se repère à quarante mètres, un monolithe sombre non.
    */
   function batirPilierAncien(x, z) {
     const groupe = new THREE.Group();
     groupe.name = "prologue-pilier-ancien";
-    groupe.position.set(x, sol(x, z), z);
+    const y0 = sol(x, z);
+    groupe.position.set(x, y0, z);
 
-    const pierre = new THREE.MeshStandardMaterial({ color: 0x4b4a55, roughness: 0.85 });
-    const grave = new THREE.MeshStandardMaterial({ color: 0x3a3944, roughness: 0.8 });
+    // Palette : celle de personne d'autre.
+    // Facettes : le monde entier est taillé à plat, et des éclats aux normales
+    // lissées se lisaient comme des cônes de plastique posés là.
+    const PIERRE = new THREE.MeshStandardMaterial({ color: 0xa9a2b4, roughness: 0.72,
+                                                    flatShading: true });
+    const VEINE  = new THREE.MeshStandardMaterial({ color: 0x6b6478, roughness: 0.6,
+                                                    flatShading: true });
+    for (const m of [PIERRE, VEINE]) contaminable(m);
 
-    // Un monolithe à six pans, plus étroit en haut, incliné : rien de droit.
-    const fut = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 1.05, 6.4, 6), pierre);
-    fut.position.y = 3.2;
-    fut.rotation.z = 0.07;
-    groupe.add(fut);
-
-    // Trois anneaux gravés, à intervalles irréguliers.
-    for (const [h, r] of [[1.5, 1.02], [3.4, 0.86], [5.2, 0.7]]) {
-      const anneau = new THREE.Mesh(new THREE.TorusGeometry(r, 0.075, 4, 6), grave);
-      anneau.rotation.x = Math.PI / 2;
-      anneau.position.y = h;
-      groupe.add(anneau);
+    // --- LA DALLE : ce qu'on voit d'abord, et de loin ---------------------
+    const DALLE = new THREE.Color(0x9c95a9);
+    const JOINT = new THREE.Color(0x6a6377);
+    const HERBE = new THREE.Color(0x6d8a49);
+    const pos = [], col = [];
+    nappeAuSol(x, z, y0, 9, 9,
+      // Un disque, mais fendu : quatre fentes radiales le brisent, et l'herbe
+      // a repris dans les fentes. C'est l'âge, et ça se lit sans un mot.
+      (u, v) => {
+        const d = Math.hypot(u, v) / 6.8;
+        const ang = Math.atan2(v, u);
+        const fente = Math.abs(Math.sin(ang * 2 + 0.4)) < 0.06 ? 0.45 : 0;
+        return 1 - d - fente - 0.09 * Math.sin(u * 1.1 + v * 0.7);
+      },
+      (c, a, u, v) => {
+        const bord = Math.min(1, Math.max(0, a * 2.6));
+        const veine = Math.abs(Math.sin(u * 0.9) * Math.cos(v * 0.8)) > 0.72 ? 1 : 0;
+        c.copy(HERBE).lerp(DALLE, bord);
+        if (veine) c.lerp(JOINT, 0.55 * bord);
+      },
+      pos, col, { hauteur: 0.06, penteMax: 1.9 });
+    if (pos.length) {
+      const dalle = new THREE.Mesh(geometrieNappe(pos, col), materiauNappe());
+      dalle.userData.ownedGeometry = true;
+      dalle.name = "pilier-dalle";
+      groupe.add(dalle);
     }
 
-    // Le cristal est ENCHÂSSÉ, pas suspendu : c'est la différence visible avec
-    // la balise moderne, et elle se lit sans une ligne de texte.
-    const c = cristal(0.42, 0x9d7fb4);
-    c.position.set(0, 4.4, 0.55);
-    c.rotation.x = 0.35;
+    // Un tas par matériau : tout le monolithe tient en deux appels de dessin.
+    const tas = new Map();
+    const piece = (geo, mat, { x: px = 0, y: py = 0, z: pz = 0,
+                               rx = 0, ry = 0, rz = 0,
+                               s = 1, sx = s, sy = s, sz = s } = {}) => {
+      const g = geo.index ? geo.toNonIndexed() : geo.clone();
+      g.applyMatrix4(new THREE.Matrix4().compose(
+        new THREE.Vector3(px, py, pz),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)),
+        new THREE.Vector3(sx, sy, sz)));
+      const l = tas.get(mat);
+      if (l) l.push(g); else tas.set(mat, [g]);
+    };
+    const BOITE = new THREE.BoxGeometry(1, 1, 1);
+    const ECLAT = new THREE.CylinderGeometry(0.06, 0.5, 1, 5);   // un éclat, pas un fût
+
+    // --- LA STÈLE PERCÉE --------------------------------------------------
+    // Une dalle dressée, pas une colonne : large, mince, et trouée. Quatre
+    // panneaux cernent l'ouverture — c'est le vide qui fait la silhouette.
+    const INCL = 0.11;                       // elle penche, et depuis longtemps
+    const stele = (py, hh, lg) => piece(BOITE, PIERRE,
+      { x: -Math.sin(INCL) * py, y: py, z: 0, rz: INCL, sx: lg, sy: hh, sz: 0.78 });
+    stele(1.35, 2.70, 2.85);                 // le pied, sous l'ouverture
+    stele(5.25, 1.85, 2.45);                 // le linteau, au-dessus
+    for (const cote of [-1, 1]) {            // les deux montants de l'ouverture
+      piece(BOITE, PIERRE, {
+        x: cote * 0.96 - Math.sin(INCL) * 3.75, y: 3.75, z: 0,
+        rz: INCL, sx: 0.86, sy: 2.10, sz: 0.78,
+      });
+    }
+    // Trois veines gravées, jamais régulières, jamais horizontales.
+    for (const [py, lg, inc] of [[0.9, 2.90, 0.05], [2.3, 2.90, -0.07], [5.7, 2.50, 0.09]]) {
+      piece(BOITE, VEINE, { x: -Math.sin(INCL) * py, y: py, z: 0,
+                            rz: INCL + inc, sx: lg, sy: 0.13, sz: 0.84 });
+    }
+
+    // --- LE CERCLE D'ÉCLATS : tout penche vers le centre -------------------
+    // Sept, hauteurs inégales, deux couchés. Les nomades bâtissent droit ; ce
+    // cercle-là converge, et c'est la seule chose à dire.
+    for (let i = 0; i < 7; i++) {
+      const ang = (i / 7) * Math.PI * 2 + 0.55;
+      const r = 4.9 + Math.sin(i * 2.3) * 0.8;
+      const h = 1.7 + ((i * 5) % 7) * 0.26;
+      const ex = Math.cos(ang) * r, ez = Math.sin(ang) * r;
+      const couche = i === 2 || i === 5;
+      const hy = hauteurMaillage(x + ex, z + ez) - y0;
+      if (couche) {
+        piece(ECLAT, PIERRE, { x: ex, y: hy + 0.32, z: ez,
+                               rx: Math.PI / 2 - 0.12, ry: ang + 0.9,
+                               sx: 1.5, sy: h, sz: 1.5 });
+      } else {
+        // l'inclinaison est dirigée vers le centre : c'est ça qu'on voit
+        piece(ECLAT, PIERRE, { x: ex, y: hy + h * 0.48, z: ez,
+                               rx: Math.sin(ang) * 0.19, rz: -Math.cos(ang) * 0.19,
+                               ry: ang, sx: 1.35, sy: h, sz: 1.35 });
+      }
+    }
+
+    for (const [mat, liste] of tas) {
+      const fondu = liste.length === 1 ? liste[0] : mergeGeometries(liste, false);
+      if (!fondu) continue;
+      if (liste.length > 1) for (const g of liste) g.dispose();
+      const mesh = new THREE.Mesh(fondu, mat);
+      mesh.userData.ownedGeometry = true;
+      groupe.add(mesh);
+    }
+    BOITE.dispose(); ECLAT.dispose();
+
+    // --- LE CRISTAL, DANS L'OUVERTURE, SANS RIEN QUI LE TIENNE ------------
+    const c = cristal(0.58, 0xb388ff);
+    c.position.set(-Math.sin(INCL) * 3.75, 3.75, 0);
+    c.rotation.z = -INCL;
     c.name = "pilier-cristal";
     groupe.add(c);
 
-    const halo = new THREE.PointLight(0xb99fd0, 0.9, 12, 2);
-    halo.position.set(0, 4.4, 0.6);
+    // Violet, et il bat plus lentement que la balise : deux objets qui
+    // clignotent au même rythme sont le même objet.
+    const halo = new THREE.PointLight(0xb388ff, 4.2, 26, 2);
+    halo.position.copy(c.position);
     groupe.add(halo);
-
-    // Socle enterré, éclats autour : il est là depuis très longtemps.
-    const socle = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 2.0, 0.7, 6), grave);
-    socle.position.y = 0.2;
-    groupe.add(socle);
-
+    groupe.userData.halo = halo;
     groupe.userData.cristal = c;
     return ajouter(groupe);
   }
@@ -1198,7 +1319,10 @@ export function createPrologue(deps) {
     if (!pilierPose && pz < piedsAncrage + SCENE.pilier.z + PREAVIS) {
       pilierPose = true;
       const c = coinPlat(px + 4, piedsAncrage + SCENE.pilier.z, 20, 7);
-      degagerZone(c.x, c.z, 18);
+      // 18 laissait un conifère de six mètres pousser entre la caméra et la
+      // stèle. Le dégagement doit couvrir l'approche, pas seulement le socle :
+      // le joueur s'arrête à douze unités, la caméra est onze plus loin.
+      degagerZone(c.x, c.z, 26);
       batirPilierAncien(c.x, c.z);
       log(`Prologue — pilier ancien posé à x ${c.x.toFixed(0)} `
         + `(relief ${c.relief.toFixed(1)} u).`);
@@ -1327,7 +1451,15 @@ export function createPrologue(deps) {
       }
     }
     const anc = props.find((p) => p.name === "prologue-pilier-ancien");
-    if (anc?.userData.cristal) anc.userData.cristal.rotation.y += delta * 0.35;
+    if (anc?.userData.cristal) {
+      anc.userData.cristal.rotation.y += delta * 0.35;
+      // Il RESPIRE, là où la balise BAT. Cinq fois plus lent, sans le
+      // deuxième temps sec : deux lumières au même rythme sont le même objet,
+      // et tout l'intérêt de cette structure est de n'être pas la même.
+      const souffle = 0.62 + 0.38 * Math.sin(temps * 0.42);
+      if (anc.userData.halo) anc.userData.halo.intensity = 4.2 * souffle;
+      anc.userData.cristal.scale.setScalar(0.92 + 0.08 * souffle);
+    }
 
     // La réaction du pilier : la Brume est repoussée puis retenue quelques
     // secondes. Effet COURT — le §27 interdit une victoire permanente.
@@ -1619,6 +1751,31 @@ export function createPrologue(deps) {
         elles sont posées à l'approche, pas au démarrage. */
     get ancrage() { return { x: piedsAncrageX, z: piedsAncrage }; },
     get props() { return props.map((p) => p.name); },
+    /**
+     * Les sources lumineuses du prologue, pour l'audio (§43).
+     *
+     * Le prologue sait où sont ses cristaux ; l'audio sait faire un
+     * bourdonnement. Ni l'un ni l'autre n'a besoin de connaître l'autre : ce
+     * getter est le seul point de contact, et il ne renvoie que des nombres.
+     * `pan` est calculé ici parce que c'est ici qu'on connaît le cap du joueur.
+     */
+    balisesSonores() {
+      const out = [];
+      const cap = lireLacet();
+      for (const [nom, frequence] of [["prologue-tour", 742],
+                                      ["prologue-pilier-ancien", 412]]) {
+        const o = props.find((p) => p.name === nom);
+        if (!o) continue;
+        const dx = o.position.x - player.position.x;
+        const dz = o.position.z - player.position.z;
+        const distance = Math.hypot(dx, dz);
+        // Angle de l'objet relativement au regard : le sinus donne
+        // directement la gauche et la droite, et rien d'autre n'est utile.
+        const angle = Math.atan2(dx, dz) - cap;
+        out.push({ cle: nom, distance, frequence, pan: Math.sin(angle) });
+      }
+      return out;
+    },
     get acteurs() {
       return acteurs.map((a) => ({ type: a.type, vivant: a.vivant,
         condamne: a.condamne, englouti: a.englouti,
