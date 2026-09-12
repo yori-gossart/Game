@@ -42,6 +42,7 @@
  */
 
 import { ORIENTATION_MODELE } from "./assetmanager.mjs";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
 /**
  * Les étapes, dans l'ordre. Ce sont AUSSI les points de contrôle des tests :
@@ -583,53 +584,390 @@ export function createPrologue(deps) {
     return ajouter(groupe);
   }
 
+  // ───────────────────────────────────────────────────────────────────────
+  // LE CAMP DU CONVOI
+  //
+  // Le §32 demande que le camp cesse d'être un marqueur et raconte « ils sont
+  // passés ici récemment ». La première version posait cinq objets sur une
+  // pelouse intacte : la capture montrait un banc, un lampadaire et deux
+  // planches flottant au-dessus d'un pré vert. Rien ne s'était passé là.
+  //
+  // Ce qui raconte un campement, à cette caméra, c'est LE SOL. En portrait, les
+  // deux tiers bas de l'écran sont de la terre : un objet posé dessus n'occupe
+  // que quelques dizaines de pixels, mais une zone piétinée de vingt mètres
+  // remplit la moitié du cadre. Le sol est donc traité en premier, et les
+  // objets viennent le confirmer.
+  // ───────────────────────────────────────────────────────────────────────
+
+  const CAMP = {
+    herbe:    new THREE.Color(0x6d8a49),   // ce que le terrain montre autour
+    terre:    new THREE.Color(0x60492f),
+    orniere:  new THREE.Color(0x4c3b26),   // une ornière, pas une tranchée
+    cendre:   new THREE.Color(0x241f1c),
+  };
+
   /**
-   * Traces du convoi. Aucune pancarte : des ornières, un feu éteint, un banc
-   * abandonné, un bout de tissu. Le joueur conclut lui-même.
+   * Le sol piétiné : une nappe de terre battue, deux ornières, des pas.
+   *
+   * Elle est construite sur la grille du terrain (2 unités, alignée sur les
+   * coordonnées paires du monde) : les sommets tombent alors exactement sur
+   * ceux du chunk et la nappe épouse le relief au lieu de le traverser. Les
+   * ornières et les pas, eux, sont trop fins pour cette grille — ils sont
+   * échantillonnés plus serré et posés un peu plus haut.
+   *
+   * Une seule géométrie, une seule passe de rendu, couleurs par sommet : c'est
+   * le même langage que le terrain, et ça reste un appel de dessin.
+   */
+  function solPietine(cx, cz, y0) {
+    const pos = [];
+    const col = [];
+    const C = new THREE.Color();
+    const PAS = 2;                     // le pas de la grille du terrain
+
+    /**
+     * La hauteur DU MAILLAGE, pas celle de la fonction.
+     *
+     * Le terrain est une grille de 2 unités : entre deux sommets, la surface
+     * rendue est un plan, pas la courbe de `terrainHeight`. Une ornière
+     * échantillonnée sur la courbe passe donc alternativement au-dessus et
+     * au-dessous du sol visible — et se découpe en tronçons, ce que la
+     * première capture montrait très bien. On interpole comme le maillage.
+     */
+    const hMaille = (wx, wz) => {
+      const x0 = Math.floor(wx / PAS) * PAS, z0 = Math.floor(wz / PAS) * PAS;
+      const tx = (wx - x0) / PAS, tz = (wz - z0) / PAS;
+      const a = sol(x0, z0), b = sol(x0 + PAS, z0);
+      const c = sol(x0, z0 + PAS), d = sol(x0 + PAS, z0 + PAS);
+      return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz - y0;
+    };
+
+    /** Usure de la terre en un point local. > 0 : le convoi est passé. */
+    const usure = (u, v) => {
+      const r = Math.hypot(u / 8.2, (v - 1.0) / 11.5);
+      const bord = 0.20 * Math.sin(u * 0.83 + v * 0.37)
+                 + 0.15 * Math.sin(v * 1.21 - u * 0.64);
+      return 1 - r - bord;
+    };
+
+    const teinte = (a) => C.copy(CAMP.herbe)
+      .lerp(CAMP.terre, Math.min(1, Math.max(0, a * 1.7)));
+
+    // --- la nappe de terre battue, sur la grille du terrain ---------------
+    const u0 = Math.ceil((cx - 11) / PAS) * PAS - cx;
+    const v0 = Math.ceil((cz - 14) / PAS) * PAS - cz;
+    const NU = Math.round(22 / PAS), NV = Math.round(28 / PAS);
+
+    for (let i = 0; i < NU; i++) {
+      for (let j = 0; j < NV; j++) {
+        const a = u0 + i * PAS, b = v0 + j * PAS;
+        const coins = [[a, b], [a + PAS, b], [a + PAS, b + PAS], [a, b + PAS]];
+        const us = coins.map(([p, q]) => usure(p, q));
+        if (Math.max(...us) <= 0.02) continue;      // bord irrégulier, gratuit
+
+        const hs = coins.map(([p, q]) => hMaille(cx + p, cz + q));
+        // Pas de terre battue sur une paroi : la capture y montrait des pans
+        // bruns dressés à la verticale, et un convoi ne campe pas sur un talus.
+        if (Math.max(...hs) - Math.min(...hs) > 1.5) continue;
+
+        const s = coins.map(([p, q], k) => [p, hs[k] + 0.04, q, us[k]]);
+        // Enroulement : vu de dessus, les sommets doivent tourner dans le sens
+        // trigonométrique, sinon la normale pointe vers le bas — la nappe est
+        // alors éliminée par le culling et ne se voit NULLE PART. C'est
+        // exactement ce qui s'est passé à la première capture.
+        for (const [m, n, o] of [[0, 2, 1], [0, 3, 2]]) {
+          for (const k of [m, n, o]) {
+            pos.push(s[k][0], s[k][1], s[k][2]);
+            teinte(s[k][3]);
+            col.push(C.r, C.g, C.b);
+          }
+        }
+      }
+    }
+
+    /** Un ruban plaqué au sol : suite de quads échantillonnés sur le maillage.
+        Il s'arrête là où la terre battue s'arrête — une ornière qui continue
+        seule dans l'herbe verte se lit comme une bande peinte. */
+    const ruban = (axe, deZ, aZ, demiLargeur, melange, hauteur) => {
+      const PASZ = 1.0;
+      for (let v = deZ; v < aZ; v += PASZ) {
+        const uMil = axe(v + PASZ / 2);
+        const a = usure(uMil, v + PASZ / 2);
+        // Une ornière ne commence pas dans l'herbe verte : elle naît de la
+        // terre battue et s'y éteint. Sans ce seuil, la capture montrait des
+        // planches sombres flottant sur un pré intact.
+        if (a < 0.28) continue;
+        teinte(a);
+        C.lerp(CAMP.orniere, melange * Math.min(1, (a - 0.28) * 2.6));
+        const r = C.r, g = C.g, bl = C.b;
+        const q = [];
+        for (const vv of [v, v + PASZ]) {
+          const u = axe(vv);
+          for (const du of [-demiLargeur, demiLargeur]) {
+            q.push([u + du, hMaille(cx + u + du, cz + vv) + hauteur, vv]);
+          }
+        }   // q = [v-, v+, (v+PAS)-, (v+PAS)+]
+        for (const [m, n, o] of [[0, 3, 1], [0, 2, 3]]) {
+          for (const k of [m, n, o]) {
+            pos.push(q[k][0], q[k][1], q[k][2]);
+            col.push(r, g, bl);
+          }
+        }
+      }
+    };
+
+    // --- deux ornières, qui serpentent comme un attelage chargé -----------
+    for (const cote of [-1, 1]) {
+      ruban((v) => cote * 1.85 + Math.sin(v * 0.15) * 0.5, -13, 14, 0.24, 0.55, 0.06);
+    }
+
+    // --- des pas : c'est eux qui disent « à pied, et par là » -------------
+    let gauche = false;
+    for (let v = 13; v > -12; v -= 1.25) {
+      gauche = !gauche;
+      const u = 4.4 + Math.sin(v * 0.11) * 1.2 + (gauche ? -0.30 : 0.30);
+      const a = usure(u, v);
+      if (a < 0.22) continue;
+      teinte(a);
+      C.lerp(CAMP.orniere, 0.8);
+      const y = hMaille(cx + u, cz + v) + 0.09;
+      const cs = Math.cos(0.12), sn = Math.sin(0.12);
+      const empreinte = [[-0.19, -0.30], [0.19, -0.30], [0.19, 0.30], [-0.19, 0.30]]
+        .map(([p, q]) => [u + p * cs - q * sn, y, v + p * sn + q * cs]);
+      for (const [m, n, o] of [[0, 2, 1], [0, 3, 2]]) {
+        for (const k of [m, n, o]) {
+          pos.push(empreinte[k][0], empreinte[k][1], empreinte[k][2]);
+          col.push(C.r, C.g, C.b);
+        }
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+    geo.computeVertexNormals();
+
+    // Le MÊME matériau que le terrain — Lambert, couleurs par sommet : une
+    // terre battue en Standard répondait autrement à la lumière et se lisait
+    // comme un autocollant posé sur l'herbe.
+    const mat = new THREE.MeshLambertMaterial({
+      vertexColors: true,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    });
+    contaminable(mat);                 // la terre grise devant la brume, comme le reste
+
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.name = "camp-sol";
+    return mesh;
+  }
+
+  /**
+   * Traces du convoi. Aucune pancarte : de la terre battue, des ornières, des
+   * pas, un feu froid, du linge qui sèche encore, des caisses, une roue
+   * cassée. Le joueur conclut lui-même.
    */
   function poserTraces(x, z) {
     const groupe = new THREE.Group();
     groupe.name = "prologue-traces";
-    groupe.position.set(x, sol(x, z), z);
+    const y0 = sol(x, z);
+    groupe.position.set(x, y0, z);
 
-    // Ornières : deux bandes sombres parallèles, orientées dans le sens de la
-    // marche du convoi. C'est le détail qui dit « ils allaient par là ».
-    const terre = new THREE.MeshStandardMaterial({ color: 0x4a3d2c, roughness: 1 });
-    for (const dx of [-0.9, 0.9]) {
-      const orniere = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.07, 22), terre);
-      orniere.position.set(dx, 0.04, 0);
-      groupe.add(orniere);
+    // --- LE SOL D'ABORD : c'est lui qui remplit le cadre ------------------
+    groupe.add(solPietine(x, z, y0));
+
+    // Les objets sont posés sur le relief réel, pas sur le plan du groupe :
+    // sans ça, tout ce qui s'éloigne du centre flotte ou s'enterre.
+    const pose = (o, u, v, dy = 0) => {
+      o.position.set(u, sol(x + u, z + v) - y0 + dy, v);
+      groupe.add(o);
+      return o;
+    };
+
+    const BOIS      = new THREE.MeshStandardMaterial({ color: 0x6b4c30, roughness: 0.95 });
+    const BOIS_VIEUX= new THREE.MeshStandardMaterial({ color: 0x4b3624, roughness: 1 });
+    const CHARBON   = new THREE.MeshStandardMaterial({ color: 0x27221e, roughness: 1 });
+    const PIERRE    = new THREE.MeshStandardMaterial({ color: 0x8a8175, roughness: 0.95 });
+    const TOILE     = new THREE.MeshStandardMaterial({ color: 0xc4553f, roughness: 1,
+                                                       side: THREE.DoubleSide });
+    const TOILE_PALE= new THREE.MeshStandardMaterial({ color: 0xc9b795, roughness: 1,
+                                                       side: THREE.DoubleSide });
+    for (const m of [BOIS, BOIS_VIEUX, CHARBON, PIERRE, TOILE, TOILE_PALE]) contaminable(m);
+
+    // Un tas par matériau : les pièces sont fondues à la fin, ce qui garde le
+    // campement à six appels de dessin quelle que soit sa richesse.
+    const tas = new Map();
+    const piece = (geo, mat, { x: px = 0, y: py = 0, z: pz = 0,
+                               rx = 0, ry = 0, rz = 0,
+                               s = 1, sx = s, sy = s, sz = s } = {}) => {
+      // mergeGeometries refuse un mélange d'indexé et de non-indexé, et les
+      // polyèdres (les cailloux) arrivent non indexés : tout est aplati.
+      const g = geo.index ? geo.toNonIndexed() : geo.clone();
+      const m4 = new THREE.Matrix4().compose(
+        new THREE.Vector3(px, py, pz),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)),
+        new THREE.Vector3(sx, sy, sz));
+      g.applyMatrix4(m4);
+      const liste = tas.get(mat);
+      if (liste) liste.push(g); else tas.set(mat, [g]);
+    };
+
+    const BOITE = new THREE.BoxGeometry(1, 1, 1);
+    const RONDIN = new THREE.CylinderGeometry(0.5, 0.5, 1, 7);
+    const CAILLOU = new THREE.DodecahedronGeometry(0.5, 0);
+
+    /**
+     * Un pan de toile, avec des plis.
+     *
+     * Un PlaneGeometry rendait une carte rouge parfaitement rigide : à la
+     * capture, la bannière ne se lisait pas comme du tissu. Trois ondulations
+     * verticales et un bas qui s'écarte suffisent — c'est du tissu à quinze
+     * mètres, et ça coûte huit triangles.
+     */
+    const toile = (amplitude = 0.09) => {
+      const g = new THREE.PlaneGeometry(1, 1, 4, 3);
+      const p = g.attributes.position;
+      for (let i = 0; i < p.count; i++) {
+        const u = p.getX(i), v = p.getY(i);
+        p.setZ(i, Math.sin((u + 0.5) * Math.PI * 2.2) * amplitude * (0.45 - v));
+        p.setX(i, u * (1 + (0.5 - v) * 0.14));      // le bas s'ouvre
+      }
+      g.computeVertexNormals();
+      return g;
+    };
+    const QUAD = toile();
+
+    // --- LE FEU FROID -----------------------------------------------------
+    // Un cercle de pierres, de la cendre, trois bûches carbonisées et un
+    // trépied : personne ne dresse un trépied pour passer une minute.
+    const FX = -2.4, FZ = -1.2;
+    const fy = sol(x + FX, z + FZ) - y0;
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2 + 0.4;
+      piece(CAILLOU, PIERRE, {
+        x: FX + Math.cos(a) * 1.15, y: fy + 0.14, z: FZ + Math.sin(a) * 1.15,
+        ry: a * 1.7, rz: 0.3, s: 0.42 + (i % 3) * 0.09,
+      });
+    }
+    // la galette de cendre
+    piece(RONDIN, CHARBON, { x: FX, y: fy + 0.06, z: FZ, sx: 1.7, sy: 0.12, sz: 1.7 });
+    for (const [dx, dz, r] of [[-0.35, 0.2, 0.7], [0.3, -0.25, -1.1], [0.1, 0.4, 2.2]]) {
+      piece(RONDIN, CHARBON, { x: FX + dx, y: fy + 0.14, z: FZ + dz,
+                               rx: Math.PI / 2, rz: r, sx: 0.24, sy: 1, sz: 0.24 });
+    }
+    // trépied + marmite
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2;
+      piece(RONDIN, BOIS_VIEUX, {
+        x: FX + Math.cos(a) * 0.62, y: fy + 0.85, z: FZ + Math.sin(a) * 0.62,
+        rx: Math.cos(a) * 0.36, rz: -Math.sin(a) * 0.36,
+        sx: 0.09, sy: 1.78, sz: 0.09,
+      });
+    }
+    // la marmite, restée pendue au trépied
+    piece(RONDIN, PIERRE, { x: FX, y: fy + 0.9, z: FZ, sx: 0.44, sy: 0.42, sz: 0.44 });
+
+    // --- LE SÉCHOIR : la seule chose visible de loin ----------------------
+    // Une perche haute et une bannière : à quarante mètres, c'est ça qui dit
+    // « camp » avant que le reste ne se lise.
+    const SX = 3.4, SZ = 1.6;
+    const sy = sol(x + SX, z + SZ) - y0;
+    piece(RONDIN, BOIS, { x: SX, y: sy + 2.2, z: SZ, rz: 0.05,
+                          sx: 0.13, sy: 4.4, sz: 0.13 });
+    piece(RONDIN, BOIS, { x: SX - 2.7, y: sy + 1.05, z: SZ + 0.5, rz: -0.09,
+                          sx: 0.11, sy: 2.1, sz: 0.11 });
+    piece(RONDIN, BOIS, { x: SX - 1.35, y: sy + 2.0, z: SZ + 0.25,
+                          rx: Math.PI / 2, ry: 0.18, sx: 0.07, sy: 2.85, sz: 0.07 });
+
+    // la bannière : à quarante mètres, elle est le camp
+    piece(QUAD, TOILE, { x: SX + 0.14, y: sy + 2.9, z: SZ - 0.06, ry: 0.15,
+                         sx: 0.8, sy: 2.5, sz: 1 });
+    for (const [dx, w, hh] of [[-0.5, 0.62, 1.05], [-1.2, 0.74, 1.32], [-2.0, 0.55, 0.88]]) {
+      piece(QUAD, TOILE_PALE, { x: SX + dx, y: sy + 1.95 - hh / 2, z: SZ + 0.3,
+                                ry: 0.1 + dx * 0.05, sx: w, sy: hh, sz: 1 });
     }
 
-    const banc = decors.poser("camp_banc", { x: -3.4, y: 0, z: 2.2, scale: 1, rotation: 0.6 });
-    if (banc) groupe.add(banc);
-    const lanterne = decors.poser("camp_lanterne", { x: 3.1, y: 0, z: -1.4, scale: 0.85 });
-    if (lanterne) { lanterne.rotation.z = 0.22; groupe.add(lanterne); }
-    const cloture = decors.poser("ruine_cloture", { x: 4.6, y: 0, z: 3.4, scale: 0.9, rotation: 1.1 });
-    if (cloture) groupe.add(cloture);
+    // --- LES CAISSES ------------------------------------------------------
+    // Trois : une debout, une ouverte, une renversée. Trois caisses alignées
+    // seraient du mobilier ; celles-là ont été déchargées vite.
+    const caisse = (u, v, ry, renversee) => {
+      const cy = sol(x + u, z + v) - y0;
+      piece(BOITE, BOIS, { x: u, y: cy + (renversee ? 0.42 : 0.44), z: v,
+                           ry, rz: renversee ? 1.45 : 0,
+                           sx: 0.92, sy: 0.86, sz: 0.92 });
+      for (const hy of [0.12, 0.74]) {
+        piece(BOITE, BOIS_VIEUX, { x: u, y: cy + hy, z: v, ry,
+                                   rz: renversee ? 1.45 : 0,
+                                   sx: 0.96, sy: 0.1, sz: 0.96 });
+      }
+    };
+    caisse(-4.4, 2.8, 0.35, false);
+    caisse(-3.6, 4.1, 1.1, false);
+    caisse(-5.1, 4.4, 0.7, true);
+    // le couvercle arraché, par terre à côté
+    piece(BOITE, BOIS_VIEUX, { x: -4.2, y: sol(x - 4.2, z + 3.5) - y0 + 0.06,
+                               z: 3.5, ry: 0.9, rz: 0.04,
+                               sx: 0.95, sy: 0.08, sz: 0.95 });
 
-    // Feu récemment éteint : cendres et deux bûches.
-    const cendre = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.75, 0.9, 0.11, 9),
-      new THREE.MeshStandardMaterial({ color: 0x2e2a26, roughness: 1 }));
-    cendre.position.set(-2.0, 0.05, -2.6);
-    groupe.add(cendre);
-    const buche = new THREE.MeshStandardMaterial({ color: 0x6b4a2c, roughness: 0.95 });
-    for (const [dx, dz, r] of [[-2.3, -2.2, 0.5], [-1.7, -3.0, -0.9]]) {
-      const b = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.12, 0.8, 6), buche);
-      b.rotation.set(Math.PI / 2, 0, r);
-      b.position.set(dx, 0.14, dz);
-      groupe.add(b);
+    // --- LA ROUE CASSÉE : elle sous-entend la charrette qu'on ne voit pas --
+    const RX = -1.1, RZ = 3.7;
+    const ry0 = sol(x + RX, z + RZ) - y0;
+    const jante = new THREE.TorusGeometry(0.62, 0.075, 4, 11);
+    piece(jante, BOIS_VIEUX, { x: RX, y: ry0 + 0.6, z: RZ, rx: 0.22, ry: 0.5, rz: 0.28 });
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      piece(RONDIN, BOIS_VIEUX, { x: RX, y: ry0 + 0.6, z: RZ, rx: 0.22, ry: 0.5,
+                                  rz: 0.28 + a, sx: 0.05, sy: 1.2, sz: 0.05 });
+    }
+    jante.dispose();
+
+    // --- LE BOIS DE CHAUFFE : empilé, donc laissé volontairement ----------
+    const WX = 4.8, WZ = -2.0;
+    const wy = sol(x + WX, z + WZ) - y0;
+    for (const [i, [dx, dy]] of [[-0.30, 0], [0, 0], [0.30, 0],
+                                 [-0.15, 0.28], [0.15, 0.28],
+                                 [0, 0.56]].entries()) {
+      piece(RONDIN, BOIS, { x: WX + dx, y: wy + 0.15 + dy, z: WZ,
+                            rx: Math.PI / 2, ry: 0.25 + i * 0.02,
+                            sx: 0.14, sy: 1.6, sz: 0.14 });
+    }
+    for (const [dx, dz, r] of [[0.9, 0.7, 0.4], [1.3, -0.5, 1.9]]) {
+      piece(RONDIN, BOIS, { x: WX + dx, y: wy + 0.14, z: WZ + dz,
+                            rx: Math.PI / 2, ry: r, sx: 0.13, sy: 1.4, sz: 0.13 });
     }
 
-    // Un tissu accroché : la couleur de l'écharpe, celle des éclaireurs.
-    const tissu = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.5, 0.72),
-      new THREE.MeshStandardMaterial({ color: 0xc4553f, roughness: 1,
-                                       side: THREE.DoubleSide }));
-    tissu.position.set(3.1, 1.5, -1.4);
-    tissu.rotation.y = 0.5;
-    groupe.add(tissu);
+    // --- LE COUCHAGE : une natte déroulée, un rouleau à la tête -----------
+    const NX = 1.0, NZ = 2.7;
+    const ny = sol(x + NX, z + NZ) - y0;
+    piece(BOITE, TOILE_PALE, { x: NX, y: ny + 0.07, z: NZ, ry: 0.42,
+                               sx: 0.92, sy: 0.12, sz: 2.0 });
+    piece(RONDIN, TOILE, { x: NX + 0.38, y: ny + 0.22, z: NZ - 0.9, rx: Math.PI / 2,
+                           ry: 0.42, sx: 0.44, sy: 0.9, sz: 0.44 });
+
+    // --- LES OUBLIS : un bol renversé, un cordage ------------------------
+    piece(RONDIN, PIERRE, { x: -1.9, y: sol(x - 1.9, z + 1.3) - y0 + 0.11,
+                            z: 1.3, rz: 2.5, sx: 0.42, sy: 0.22, sz: 0.42 });
+    const corde = new THREE.TorusGeometry(0.3, 0.065, 4, 9);
+    piece(corde, BOIS_VIEUX, { x: 2.6, y: sol(x + 2.6, z - 3.2) - y0 + 0.07,
+                               z: -3.2, rx: Math.PI / 2 });
+    corde.dispose();
+
+    // --- fusion : un maillage par matériau --------------------------------
+    for (const [mat, liste] of tas) {
+      const fondu = liste.length === 1 ? liste[0] : mergeGeometries(liste, false);
+      if (!fondu) continue;
+      if (liste.length > 1) for (const g of liste) g.dispose();
+      const mesh = new THREE.Mesh(fondu, mat);
+      mesh.userData.ownedGeometry = true;
+      groupe.add(mesh);
+    }
+    for (const g of [BOITE, RONDIN, CAILLOU, QUAD]) g.dispose();
+
+    // --- les modèles du pack, qui portent le style du reste du monde ------
+    const banc = decors.poser("camp_banc", { x: 0, y: 0, z: 0, scale: 1, rotation: 0.6 });
+    if (banc) pose(banc, -2.1, 5.0);
+    const lanterne = decors.poser("camp_lanterne", { x: 0, y: 0, z: 0, scale: 0.85 });
+    if (lanterne) { lanterne.rotation.z = 0.22; pose(lanterne, 2.3, -0.3); }
+    const cloture = decors.poser("ruine_cloture", { x: 0, y: 0, z: 0, scale: 0.9, rotation: 1.1 });
+    if (cloture) pose(cloture, 5.2, 2.9);
 
     return ajouter(groupe);
   }
@@ -811,21 +1149,59 @@ export function createPrologue(deps) {
    */
   const PREAVIS = 220;
 
+  /**
+   * Cherche le sol le plus PLAT autour d'un point.
+   *
+   * La tour de l'ouverture a d'abord été bâtie dans un lac ; le camp du convoi
+   * s'est ensuite posé en travers d'un talus, et la terre battue y formait une
+   * falaise. Le défaut est le même : une scène posée à une coordonnée fixe
+   * atterrit sur le relief que la graine a décidé, et personne ne le regarde.
+   *
+   * Un convoi ne campe pas sur une pente. On échantillonne donc quelques
+   * emplacements voisins et on garde celui dont le sol varie le moins. Le
+   * balayage est petit — l'axe du prologue doit rester l'axe du joueur — et
+   * déterministe : même graine, même position de joueur, même choix.
+   */
+  function coinPlat(cx, cz, portee, rayon) {
+    let meilleur = { x: cx, z: cz, relief: Infinity };
+    for (let dx = -portee; dx <= portee; dx += portee / 4) {
+      for (let dz = -portee; dz <= portee; dz += portee / 4) {
+        let bas = Infinity, haut = -Infinity;
+        for (let a = 0; a < 8; a++) {
+          const ang = (a / 8) * Math.PI * 2;
+          for (const r of [rayon * 0.55, rayon]) {
+            const h = sol(cx + dx + Math.cos(ang) * r, cz + dz + Math.sin(ang) * r);
+            if (h < bas) bas = h;
+            if (h > haut) haut = h;
+          }
+        }
+        // Un léger malus à l'écart : à relief égal, on reste sur l'axe.
+        const relief = haut - bas + Math.hypot(dx, dz) * 0.02;
+        if (relief < meilleur.relief) meilleur = { x: cx + dx, z: cz + dz, relief };
+      }
+    }
+    return meilleur;
+  }
+
   function poserScenesLointaines(pz) {
     const px = player.position.x;
 
     if (!tracesPosees && pz < piedsAncrage + SCENE.traces.z + PREAVIS) {
       tracesPosees = true;
-      degagerZone(px, piedsAncrage + SCENE.traces.z, 16);
-      poserTraces(px, piedsAncrage + SCENE.traces.z);
-      log(`Prologue — traces du convoi posées à x ${px.toFixed(0)}.`);
+      const c = coinPlat(px, piedsAncrage + SCENE.traces.z, 24, 9);
+      degagerZone(c.x, c.z, 22);   // un pin de sept mètres poussait au milieu du camp
+      poserTraces(c.x, c.z);
+      log(`Prologue — traces du convoi posées à x ${c.x.toFixed(0)} `
+        + `(relief ${c.relief.toFixed(1)} u).`);
     }
 
     if (!pilierPose && pz < piedsAncrage + SCENE.pilier.z + PREAVIS) {
       pilierPose = true;
-      degagerZone(px + 4, piedsAncrage + SCENE.pilier.z, 18);
-      batirPilierAncien(px + 4, piedsAncrage + SCENE.pilier.z);
-      log(`Prologue — pilier ancien posé à x ${(px + 4).toFixed(0)}.`);
+      const c = coinPlat(px + 4, piedsAncrage + SCENE.pilier.z, 20, 7);
+      degagerZone(c.x, c.z, 18);
+      batirPilierAncien(c.x, c.z);
+      log(`Prologue — pilier ancien posé à x ${c.x.toFixed(0)} `
+        + `(relief ${c.relief.toFixed(1)} u).`);
     }
   }
 
