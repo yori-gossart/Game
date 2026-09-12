@@ -159,7 +159,7 @@ const skyDome = (() => {
 scene.add(skyDome);
 
 const CHUNK_SIZE = 32;
-const CHUNK_RADIUS = 2;
+const CHUNK_RADIUS = 3;
 const CHUNK_SEGMENTS = 16;
 const PLAYER_SPEED = 6.2;
 
@@ -232,7 +232,7 @@ let diagFlou = true;
 // le bord du monde devient visible à l'horizon.
 const TERRAIN_REACH = CHUNK_RADIUS * CHUNK_SIZE;
 const FOG_FAR = TERRAIN_REACH - 2;
-const FOG_NEAR = FOG_FAR * 0.42;
+const FOG_NEAR = FOG_FAR * 0.55;
 
 scene.fog = new THREE.Fog(FOG_COLOR, FOG_NEAR, FOG_FAR);
 
@@ -248,11 +248,35 @@ const CAMERA_FAR = FOG_FAR + 20;
 
 const camera = new THREE.PerspectiveCamera(56, 1, CAMERA_NEAR, CAMERA_FAR);
 
-const hemiLight = new THREE.HemisphereLight(0xf7fbff, 0x645c42, 2.15);
+/**
+ * LUMIÈRE (retravaillée en 0.7.2).
+ *
+ * Avant : hémisphérique 2,15 contre soleil 2,35, et un soleil à 51° au-dessus
+ * de l'horizon. Une lumière presque uniforme, tombant presque à la verticale :
+ * le terrain ne pouvait pas avoir de volume, et le personnage était posé sur le
+ * décor comme un autocollant. C'est ce qui rendait le sol plat même après lui
+ * avoir donné du relief — la géométrie était là, la lumière ne la révélait pas.
+ *
+ * Trois changements, et ils marchent ensemble :
+ *
+ *   - l'hémisphérique tombe à 1,05. C'est elle qui écrasait tout : à 2,15 elle
+ *     remplissait chaque creux et annulait le modelé ;
+ *   - le soleil monte à 3,10 et devient la source dominante ;
+ *   - il DESCEND à 29° au-dessus de l'horizon. Une lumière rasante est la seule
+ *     qui fasse exister une bosse de quarante centimètres, et le terrain de ce
+ *     jeu n'en a pas de plus hautes.
+ *
+ * Le sol de l'hémisphérique passe au brun-vert : il porte la lumière rebondie,
+ * et un rebond bleuté sur un sol d'herbe était une incohérence gratuite.
+ */
+// Réglé après capture : un soleil chaud et saturé à 3,10 sur un sol vert
+// donnait un monde jaune de désert, là où le §6 demande des verts dans la
+// direction saine. La lumière est refroidie et le rebond du sol reverdi.
+const hemiLight = new THREE.HemisphereLight(0xdff0ff, 0x4f5c38, 1.28);
 scene.add(hemiLight);
 
-const sunLight = new THREE.DirectionalLight(0xffe5ad, 2.35);
-sunLight.position.set(-42, 60, 24);
+const sunLight = new THREE.DirectionalLight(0xfff0d4, 2.72);
+sunLight.position.set(-58, 33, 26);
 scene.add(sunLight);
 
 // Le soleil était à 122 u du joueur pour un plan far à 122, et à 24° de
@@ -372,6 +396,16 @@ const BIOMES = [
 const ROC_COLOR = new THREE.Color(0x8c8b84);
 const SEC_COLOR = new THREE.Color(0xa8925f);
 const CLAIRIERE_COLOR = new THREE.Color(0x9fb872);
+/* 0.7.2 — deux teintes de sol de plus, pour que le terrain cesse d'être un
+   aplat : la terre des creux et des pentes, et la terre battue de la piste
+   qu'a laissée le convoi. */
+const TERRE_COLOR = new THREE.Color(0x6b5c3f);
+const PISTE_COLOR = new THREE.Color(0x7d6a4c);
+/* La piste suit l'axe de fuite. Il est fixe en X parce que le monde entier
+   l'est : le couloir de ressources, le prologue et le convoi descendent tous
+   la même ligne. */
+const AXE_CONVOI_X = 1.5;
+const LARGEUR_PISTE = 7.5;
 
 const biomeColors = BIOMES.map((biome) => new THREE.Color(biome.terrain));
 const biomeTreeColors = BIOMES.map((biome) => new THREE.Color(biome.tree));
@@ -1136,11 +1170,53 @@ function terrainHeight(x, z) {
     Math.sin(x * 0.112 - sz * 3.3) *
     Math.cos(z * 0.098 + sx * 2.9) * 0.34;
 
+  // 0.7.2 — LE RELIEF QUI EXISTE À L'ÉCHELLE DE L'ÉCRAN.
+  //
+  // Toutes les ondes ci-dessus ont des périodes de 56 à 360 unités. La caméra,
+  // elle, voit une bande d'environ quarante unités de profondeur : sur cette
+  // largeur, aucune d'elles ne varie assez pour se voir. Résultat vérifié par
+  // capture avant tout changement — le sol occupe les deux tiers de chaque
+  // image du jeu et il y est un dégradé vert uniforme.
+  //
+  // C'est la TROISIÈME fois que ce projet fait cette erreur : la crête de la
+  // brume en 0.7 (période 114 pour quinze unités visibles), les bandes de ciel
+  // en 0.7.1, et le terrain ici. À chaque fois du code juste, à chaque fois
+  // rien à l'écran.
+  //
+  // Périodes de 11 et 7 unités, amplitudes de 0,38 et 0,17. Le maillage porte
+  // un sommet toutes les deux unités, il peut donc les représenter. Un joueur
+  // qui marche ne les subit pas — 0,55 unité de creux à creux, c'est une motte
+  // de terre, pas une marche — mais l'œil, lui, les voit tout de suite : elles
+  // donnent au sol des ombres propres et cassent l'aplat.
+  const mottes =
+    Math.sin(x * 0.57 + sz * 1.9) * Math.cos(z * 0.61 - sx * 2.4) * 0.38 +
+    Math.sin((x + z * 0.7) * 0.91 - sx * 1.3) * 0.17;
+
   // Le relèvement compense les creux : sans lui ils noyaient 25 % du terrain
   // (contre 19,5 % en 0.4), et un quart du monde devenait un lac. Mesuré avec
   // ces valeurs : 15,1 % sous l'eau, pour des dépressions plus profondes
   // qu'avant — plus de relief ET moins d'eau.
-  return broad + ridge + hills + detail + creux + plis + 0.9;
+
+  // 0.7.2 — LE TERTRE DU PROLOGUE.
+  //
+  // La mise en scène du prologue est posée à des coordonnées fixes autour du
+  // point d'apparition, et elle ne consultait pas le terrain. Vu sur la capture
+  // d'ouverture : selon la graine, la tour-balise se bâtissait DANS UN LAC —
+  // socle, montants et débris flottant sur l'eau. Le premier plan du jeu.
+  //
+  // Le sol est donc relevé autour du départ, assez pour rester au sec (l'eau
+  // est à −2,65) et assez peu pour que ce soit une butte et non un piédestal.
+  // Le relèvement s'éteint en douceur sur soixante-dix unités, donc il ne crée
+  // aucune marche ni aucun mur invisible, et il ne dépend d'aucune graine :
+  // c'est une décision de mise en scène, pas de génération.
+  //
+  // Il sert aussi le §20 : la tour se dresse sur un tertre, et la pente que le
+  // personnage a dévalée en tombant se lit dans le terrain lui-même.
+  const dxT = x - 1.5, dzT = z - 1.5;
+  const dT = Math.sqrt(dxT * dxT + dzT * dzT);
+  const tertre = dT < 70 ? Math.pow(Math.cos((dT / 70) * Math.PI * 0.5), 2) * 4.6 : 0;
+
+  return broad + ridge + hills + detail + creux + plis + mottes + tertre + 0.9;
 }
 
 /**
@@ -1431,7 +1507,7 @@ const DEPART = { x: 1.5, z: 1.5 };
  */
 const ZONES_DEGAGEES = SANS_PROLOGUE ? [] : [
   // Le réveil et la tour : la plus grande, c'est la première image du jeu.
-  { x: DEPART.x + SCENE_PROLOGUE.tour.x * 0.5, z: DEPART.z + SCENE_PROLOGUE.tour.z * 0.5, r: 22 },
+  { x: DEPART.x + SCENE_PROLOGUE.tour.x * 0.55, z: DEPART.z + SCENE_PROLOGUE.tour.z * 0.55, r: 30 },
   // Le sac, et la ligne de fuite juste devant.
   { x: DEPART.x, z: DEPART.z - 14, r: 11 },
 ];
@@ -1532,14 +1608,57 @@ function createChunk(cx, cz) {
     // Variation de teinte par sommet : deux ondes courtes décorrélées cassent
     // l'aplat sans coûter un seul triangle de plus. L'altitude éclaircit
     // légèrement les crêtes et assombrit les creux.
+    // Le grain d'origine, périodes 20 et 30 unités, plus l'altitude.
     const grain =
       Math.sin(worldX * 0.31 + worldZ * 0.17) * 0.5 +
       Math.cos(worldX * 0.13 - worldZ * 0.27) * 0.5;
 
     const height = positions.getY(i);
-    const shade = 1 + grain * 0.10 + Math.max(-1, Math.min(1, height / 7)) * 0.08;
+    let shade = 1 + grain * 0.10 + Math.max(-1, Math.min(1, height / 7)) * 0.08;
+
+    // 0.7.2 — DES PLAQUES, pas un dégradé.
+    //
+    // Le grain ci-dessus a des périodes de 20 et 30 unités : à l'échelle de
+    // l'écran il se lit comme une teinte unie. Deux champs plus serrés — 9 et
+    // 5 unités — donnent au sol des plaques d'herbe rase, de terre battue et
+    // de mousse. C'est le même diagnostic que pour le relief : ce n'est pas
+    // l'amplitude qui manquait, c'est l'échelle.
+    const plaque =
+      Math.sin(worldX * 0.71 - worldZ * 0.43) * Math.cos(worldZ * 0.67 + worldX * 0.29) * 0.6 +
+      Math.sin((worldX - worldZ * 1.3) * 1.27) * 0.4;
+    shade *= 1 + plaque * 0.085;
+
+    // Les creux sont plus sombres et plus terreux que les bosses : c'est là que
+    // l'eau stagne et que l'herbe cède. Lu sur la pente locale plutôt que sur
+    // l'altitude absolue, sinon toute une colline s'assombrit d'un bloc.
+    // Réglé après capture : la première version lisait AUSSI la pente, et
+    // comme les mottes en créent partout, tout le terrain virait à l'olive
+    // terreux. Seuls les vrais creux s'assombrissent — là où l'eau stagne et
+    // où l'herbe cède —, et jamais au-delà d'un quart.
+    const creuxLocal = Math.max(0,
+      terrainHeight(worldX, worldZ + 2.4) - terrainHeight(worldX, worldZ));
+    vertexColor.lerp(TERRE_COLOR, Math.min(0.26, Math.max(0, creuxLocal - 0.25) * 0.34));
 
     vertexColor.multiplyScalar(shade);
+
+    // --- LE PASSAGE DU CONVOI (§19) -------------------------------------
+    //
+    // Un couloir de terre battue le long de l'axe de fuite. Ce n'est pas un
+    // ornement : le §19 demande qu'il aide NATURELLEMENT le joueur à tenir sa
+    // direction, et c'est la seule indication de route que le jeu se permette
+    // en dehors du bandeau d'objectif. Il suit l'axe des ressources — donc
+    // l'axe que le joueur descend déjà — et s'efface sur ses bords.
+    const ecartAxe = Math.abs(worldX - AXE_CONVOI_X);
+    if (ecartAxe < LARGEUR_PISTE) {
+      // Le bord n'est pas droit : la piste serpente légèrement avec z, sinon
+      // elle se lirait comme une bande peinte.
+      const serpent = Math.sin(worldZ * 0.021) * 2.6 + Math.sin(worldZ * 0.058) * 1.1;
+      const d = Math.abs(worldX - AXE_CONVOI_X - serpent);
+      if (d < LARGEUR_PISTE) {
+        const force = Math.pow(1 - d / LARGEUR_PISTE, 1.6);
+        vertexColor.lerp(PISTE_COLOR, force * 0.62);
+      }
+    }
 
     // Le sol dit la même chose que la végétation : la zone rocheuse grisonne,
     // le sol sec vire à l'ocre pâle, la clairière s'éclaircit un peu. Les

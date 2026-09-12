@@ -1112,6 +1112,13 @@ body.pro-fige #bag-list,
 body.pro-fige #pickup-feed,
 body.pro-fige #intro { display: none !important; }
 
+/* Le bandeau « La brume monte » est l'introduction du MONDE PROCÉDURAL. Pendant
+   le prologue il s'affichait par-dessus les répliques du personnage : deux
+   textes en même temps, dont l'un explique une mécanique que la scène est
+   justement en train d'enseigner. Vu sur les cinq captures de référence.
+   `pro-fige` ne suffisait pas — il n'est posé que pendant le voile. */
+body.prologue #intro { display: none !important; }
+
 /* ─────────────────────────────────────────────────────────────────────────
    Panneau ?prologuetest (0.7)
 

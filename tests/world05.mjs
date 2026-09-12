@@ -30,7 +30,17 @@ function faireDeps(seed) {
     const bosse = Math.sin(x * 0.0195 + sx * 7.3) * Math.cos(z * 0.0172 - sz * 6.1);
     const creux = -Math.pow(Math.max(0, bosse), 3) * 3.6;
     const plis = Math.sin(x * 0.112 - sz * 3.3) * Math.cos(z * 0.098 + sx * 2.9) * 0.34;
-    return broad + ridge + hills + detail + creux + plis + 0.9;
+    // 0.7.2 — le relief courte échelle. La doublure doit suivre le moteur au
+    // terme près : elle sert à juger des décisions de placement, et un terrain
+    // qui diverge d'un demi-mètre juge un autre monde.
+    const mottes = Math.sin(x * 0.57 + sz * 1.9) * Math.cos(z * 0.61 - sx * 2.4) * 0.38
+                 + Math.sin((x + z * 0.7) * 0.91 - sx * 1.3) * 0.17;
+    // 0.7.2 — le tertre du prologue : relèvement fixe autour du départ, pour
+    // que la mise en scène ne se bâtisse jamais dans l'eau. Indépendant de la
+    // graine, donc reproduit tel quel ici.
+    const dT = Math.hypot(x - 1.5, z - 1.5);
+    const tertre = dT < 70 ? Math.pow(Math.cos((dT / 70) * Math.PI * 0.5), 2) * 4.6 : 0;
+    return broad + ridge + hills + detail + creux + plis + mottes + tertre + 0.9;
   };
 
   const zoneAt = (x, z) => {

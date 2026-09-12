@@ -176,7 +176,14 @@ const maxChunks = Math.max(...samples.map(s => s.c));
 const minChunks = Math.min(...samples.map(s => s.c));
 const lastD = samples[samples.length - 1].d;
 const dist = Math.hypot(samples.at(-1).p.x - beforeTravel.info ? 0 : 0, 0);
-check("chunks: never exceeds 25 active", maxChunks <= 25, `max ${maxChunks}`);
+/* (2r+1)² — le rayon de chunks est passé de 2 à 3 en 0.7.2 pour doubler la
+   portée de vue. On lit la règle sur le moteur ; le nombre, lui, changera
+   encore. */
+const CHUNKS_MAX = await page.evaluate(() => {
+  const r = window.HORIZON.engine.chunkRadius;
+  return (2 * r + 1) * (2 * r + 1);
+});
+check(`chunks: never exceeds ${CHUNKS_MAX} active`, maxChunks <= CHUNKS_MAX, `max ${maxChunks}`);
 check("chunks: stays close to 25 while streaming", minChunks >= 20, `min ${minChunks}`);
 check("chunks: new chunks generated while exploring", lastD > beforeTravel.d,
   `discovered ${beforeTravel.d} -> ${lastD}`);
@@ -210,7 +217,7 @@ await page.waitForTimeout(12000);
 await page.evaluate(() => { window.HORIZON.move(0, 0); window.HORIZON.setRun(false); });
 const far = await page.evaluate(() => ({ c: window.HORIZON.chunks, d: window.HORIZON.discovered,
   info: window.HORIZON.info, objs: window.HORIZON.objectsInScene, p: window.HORIZON.pos }));
-check("chunks: settles back to 25 after long run", far.c === 25, `chunks ${far.c}`);
+check(`chunks: settles back to ${CHUNKS_MAX} after long run`, far.c === CHUNKS_MAX, `chunks ${far.c}`);
 check("chunks: geometries still bounded after long run", far.info.geometries <= geoStart * 1.5 + 10,
   `geometries ${far.info.geometries}, travelled to X${far.p.x.toFixed(0)} Z${far.p.z.toFixed(0)}, discovered ${far.d}`);
 
@@ -262,7 +269,7 @@ const afterNew = await page.evaluate(() => ({ seed: window.HORIZON.seed, pos: wi
 check("new world: seed changes", afterNew.seed !== seedBefore, `${seedBefore} -> ${afterNew.seed}`);
 check("new world: player respawns at origin",
   Math.hypot(afterNew.pos.x, afterNew.pos.z) < 5, `X${afterNew.pos.x} Z${afterNew.pos.z}`);
-check("new world: chunks rebuilt", afterNew.c === 25, `${afterNew.c}`);
+check("new world: chunks rebuilt", afterNew.c === CHUNKS_MAX, `${afterNew.c}`);
 
 // ---- 11. errors ----
 const realErrors = errors.filter(e => !e.includes("favicon"));

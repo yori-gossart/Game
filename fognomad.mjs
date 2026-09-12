@@ -518,15 +518,48 @@ export function createFogNomad(ctx) {
       // silhouette quand le mur barre l'horizon ; la troisième est la seule qui
       // existe encore quand on le regarde de trente unités et qu'on n'en voit
       // qu'une bande de quinze. Elle porte donc le poids le plus fort.
+      // Quatre échelles, et la quatrième est celle qui change tout.
+      //
+      // La 0.7.1 en avait trois — 300, 114 et 38 unités — et le front y avait
+      // gagné des courbes. Vérifié par capture, il restait fait de « grandes
+      // arches douces » : trois sinusoïdes se superposent toujours en une
+      // ondulation régulière, et rien de régulier ne fait peur.
+      //
+      // La quatrième a une période de 13 unités — c'est-à-dire à peu près la
+      // largeur de mur visible à trente unités — et elle est REDRESSÉE : on ne
+      // garde que sa partie positive, portée à la puissance 1,6. Une sinusoïde
+      // monte et descend symétriquement ; une sinusoïde redressée fait des
+      // POINTES séparées par des creux plats. C'est la différence entre une
+      // vague et une déchirure.
+      const pointe = Math.max(0, Math.sin(x * 0.48 + phase * 0.9));
       const billow = crest * (
-        Math.sin(x * 0.021 - phase * 1.7) * 0.26 +
-        Math.sin(x * 0.055 + phase) * 0.30 +
-        Math.sin(x * 0.165 + phase * 1.3) * 0.44
+        Math.sin(x * 0.021 - phase * 1.7) * 0.22 +
+        Math.sin(x * 0.055 + phase) * 0.26 +
+        Math.sin(x * 0.165 + phase * 1.3) * 0.30 +
+        Math.pow(pointe, 1.6) * 0.42
       );
 
       const top = crestY * (1 + billow);
       const k = Math.min(1, Math.max(0, (top - y) / soft));
-      const alpha = baseAlpha * Math.pow(k, falloff);
+      let alpha = baseAlpha * Math.pow(k, falloff);
+
+      // LE CONTACT AVEC LE SOL (§10).
+      //
+      // Une nappe pleinement opaque jusqu'en bas donne un bord inférieur net,
+      // et un bord net contre le terrain se lit comme une découpe de carton
+      // posée dessus. La Brume doit AVALER le sol, pas passer derrière lui.
+      //
+      // Les deux dernières unités au-dessus du sol s'allègent donc, et
+      // s'allègent IRRÉGULIÈREMENT : là où la nappe est fine, le terrain
+      // transparaît et on voit la brume ramper entre les bosses. Sous le
+      // niveau du sol elle redevient pleine — c'est la partie enterrée, elle
+      // doit couvrir les creux.
+      if (y > 0 && y < 3.2 && baseAlpha < 0.98) {
+        const rampe = y / 3.2;
+        const dentelle = 0.55 + 0.45 * Math.sin(x * 0.37 - phase * 1.1)
+                                     * Math.cos(x * 0.13 + phase * 0.6);
+        alpha *= 0.35 + 0.65 * rampe * dentelle + 0.28 * (1 - rampe);
+      }
 
       // Traînées verticales : la brume n'est pas une peinture unie. La
       // troisième sinusoïde est courte pour la même raison que la crête
@@ -669,7 +702,21 @@ export function createFogNomad(ctx) {
     mesh.frustumCulled = false;
     fogGroup.add(mesh);
 
-    return { mesh, baseY: mesh.position.y, drift: spec.drift, phase: index * 1.3 };
+    return {
+      mesh,
+      baseY: mesh.position.y,
+      baseZ: mesh.position.z,
+      drift: spec.drift,
+      phase: index * 1.3,
+      // Périodes volontairement incommensurables : deux nappes qui pulseraient
+      // au même rythme resteraient parallèles, ce qui est exactement ce qu'on
+      // cherche à défaire.
+      pulse: 0.17 + index * 0.041,
+      decalage: index * 2.3,
+      // L'avant-garde respire le plus : c'est elle qu'on longe, et c'est sur
+      // elle que la profondeur se voit.
+      amplitudeZ: 1.6 + index * 1.15,
+    };
   });
 
   scene.add(fogGroup);
@@ -737,6 +784,25 @@ export function createFogNomad(ctx) {
 
       layer.mesh.position.y = layer.baseY +
         Math.sin(layer.phase * 0.5) * CONFIG.fog.breathe;
+
+      // 0.7.2 — RESPIRATION EN PROFONDEUR, et léger gauchissement.
+      //
+      // Jusqu'ici les nappes ne bougeaient qu'en X et en Y : quatre feuilles
+      // parallèles qui glissent, ce que le §9 nomme précisément comme le
+      // défaut à éviter. Elles avancent et reculent maintenant chacune à son
+      // rythme, de quelques unités. Comme les périodes sont incommensurables,
+      // l'écart entre deux nappes change en permanence — le front se resserre
+      // puis s'ouvre, et c'est cela qui donne une MASSE plutôt qu'un empilement.
+      //
+      // Le gauchissement est un demi-degré de lacet qui oscille très lentement.
+      // Il ne se remarque pas ; ce qu'on remarque, c'est que les crêtes des
+      // quatre nappes ne restent jamais alignées.
+      //
+      // Coût : deux transformations par nappe et par image. Zéro triangle.
+      layer.mesh.position.z = layer.baseZ +
+        Math.sin(layer.phase * layer.pulse + layer.decalage) * layer.amplitudeZ;
+      layer.mesh.rotation.y =
+        Math.sin(layer.phase * layer.pulse * 0.63 + layer.decalage) * 0.009;
     }
   }
 

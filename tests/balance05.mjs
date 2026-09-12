@@ -317,7 +317,12 @@ const arrivee = await H(() => ({
 console.log(`   départ  ${JSON.stringify(depart)}`);
 console.log(`   arrivée ${JSON.stringify(arrivee)}`);
 
-ok("run longue: chunks toujours bornés à 25", arrivee.chunks === 25, `${arrivee.chunks}`);
+// (2r+1)² : la portée de vue est passée de 2 à 3 chunks en 0.7.2, la borne
+// suit la règle et non un nombre recopié.
+const rayon = await H(() => window.HORIZON.engine.chunkRadius);
+const borneChunks = (2 * rayon + 1) ** 2;
+ok(`run longue: chunks toujours bornés à ${borneChunks}`,
+   arrivee.chunks === borneChunks, `${arrivee.chunks}`);
 ok("run longue: géométries bornées", arrivee.geo <= depart.geo + 12,
    `${depart.geo} -> ${arrivee.geo}`);
 ok("run longue: objets de scène bornés", arrivee.objets <= depart.objets * 1.6 + 20,

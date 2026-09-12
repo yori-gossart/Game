@@ -35,7 +35,14 @@ const A = await p.evaluate(() => ({
   ready: document.body.classList.contains("ready")
 }));
 console.log("contexte GL:", JSON.stringify(A.ctx));
-ok("A: 25 chunks au démarrage", A.chunks === 25, `${A.chunks}`);
+/* 49 et non 25 depuis la 0.7.2 : CHUNK_RADIUS est passé de 2 à 3 pour doubler
+   la portée de vue. Le nombre attendu est LU sur le moteur plutôt qu'écrit à la
+   main — c'est la règle (2r+1)² qui est vraie, pas la valeur. */
+const CHUNKS_ATTENDUS = await p.evaluate(() => {
+  const r = window.HORIZON.engine.chunkRadius;
+  return (2 * r + 1) * (2 * r + 1);
+});
+ok(`A: ${CHUNKS_ATTENDUS} chunks au démarrage`, A.chunks === CHUNKS_ATTENDUS, `${A.chunks}`);
 ok("A: joueur posé sur le sol", Math.abs(A.pos.y) < 12, `y=${A.pos.y.toFixed(2)}`);
 ok("A: HUD renseigné", /Seed \d+/.test(A.hudSeed), A.hudSeed);
 ok("A: première image rendue", A.ready);
@@ -129,7 +136,7 @@ const geoEnd = apresSecondTour.info.geometries;
 ok("P4: géométries GPU stables du 100e au 200e chunk", geoEnd <= geoStart + 6,
    `${geoStart} -> ${geoEnd}`);
 ok("P4: objets de scène stables", marks[100].objs <= s0.objs * 1.4 + 10, `${s0.objs} -> ${marks[100].objs}`);
-ok("P4: chunks actifs bornés à 25", marks[100].chunks <= 25, `${marks[100].chunks}`);
+ok(`P4: chunks actifs bornés à ${CHUNKS_ATTENDUS}`, marks[100].chunks <= CHUNKS_ATTENDUS, `${marks[100].chunks}`);
 
 console.log("\n=== TEST B — 100+ chunks parcourus, intégrité ===");
 const nan = await p.evaluate(() => window.HORIZON.scanNonFinite());
@@ -151,7 +158,7 @@ const rt = await p.evaluate(async () => {
 });
 ok("C: seed inchangée après aller-retour", rt.seed === rt.seedAfter, `${rt.seed}`);
 ok("C: terrain identique au retour", rt.maxd === 0, `écart max ${rt.maxd}`);
-ok("C: 25 chunks au retour", rt.chunks === 25, `${rt.chunks}`);
+ok(`C: ${CHUNKS_ATTENDUS} chunks au retour`, rt.chunks === CHUNKS_ATTENDUS, `${rt.chunks}`);
 
 console.log("\n=== TEST D — Changements de chunk très rapides ===");
 const rapid = await p.evaluate(async () => {
@@ -167,7 +174,7 @@ const rapidAfter = await snap();
 ok("D: pas d'explosion de géométries sous 300 sauts",
    rapidAfter.info.geometries <= rapid.before + 8,
    `${rapid.before} -> ${rapidAfter.info.geometries}`);
-ok("D: 25 chunks après stabilisation", rapidAfter.chunks === 25, `${rapidAfter.chunks}`);
+ok(`D: ${CHUNKS_ATTENDUS} chunks après stabilisation`, rapidAfter.chunks === CHUNKS_ATTENDUS, `${rapidAfter.chunks}`);
 
 console.log("\n=== TEST E — NOUVEAU répété ===");
 const nw = await p.evaluate(async () => {
@@ -235,7 +242,7 @@ ok("F: seed conservée", saveBefore.seed === saveAfter.seed, `${saveBefore.seed}
 ok("F: run repart du départ après rechargement",
    Math.hypot(saveAfter.pos.x, saveAfter.pos.z) < 5,
    `(${saveBefore.pos.x.toFixed(1)},${saveBefore.pos.z.toFixed(1)}) -> (${saveAfter.pos.x.toFixed(1)},${saveAfter.pos.z.toFixed(1)})`);
-ok("F: monde rechargé à 25 chunks", saveAfter.chunks === 25, `${saveAfter.chunks}`);
+ok(`F: monde rechargé à ${CHUNKS_ATTENDUS} chunks`, saveAfter.chunks === CHUNKS_ATTENDUS, `${saveAfter.chunks}`);
 
 console.log("\n=== TEST G — Caméra ===");
 const cam = await p.evaluate(async () => {

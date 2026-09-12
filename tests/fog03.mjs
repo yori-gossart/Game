@@ -139,7 +139,9 @@ ok("restart: écran de mort masqué", !afterRestart.ecran);
 ok("restart: sac vidé", afterRestart.weight === 0);
 ok("restart: brume replacée", afterRestart.gap > 50, `marge ${afterRestart.gap.toFixed(0)}`);
 ok("restart: ressources régénérées", afterRestart.res > 5, `${afterRestart.res}`);
-ok("restart: 25 chunks", afterRestart.chunks === 25);
+const rayonChunk = await p.evaluate(() => window.HORIZON.engine.chunkRadius);
+ok(`restart: ${(2 * rayonChunk + 1) ** 2} chunks`,
+   afterRestart.chunks === (2 * rayonChunk + 1) ** 2, `${afterRestart.chunks}`);
 
 console.log("\n=== RESSOURCES ET LATÉRALITÉ ===");
 // Un seul relevé ne suffit plus depuis la 0.5 : le cristal ne représente que
@@ -314,7 +316,8 @@ const quad = await p.evaluate(async () => {
   return out;
 });
 quad.forEach(q => console.log(`   (${q.x},${q.z}) chunks=${q.chunks} ressources=${q.res} NaN=${q.nan}`));
-ok("quadrants: 25 chunks partout", quad.every(q => q.chunks === 25));
+ok(`quadrants: ${(2 * rayonChunk + 1) ** 2} chunks partout`,
+   quad.every(q => q.chunks === (2 * rayonChunk + 1) ** 2));
 ok("quadrants: aucune valeur non finie", quad.every(q => q.nan === 0));
 ok("quadrants: ressources générées dans les quatre",
    quad.every(q => q.res > 5), quad.map(q => q.res).join(" / "));
@@ -355,7 +358,9 @@ const after10 = await p.evaluate(() => ({ geo: window.HORIZON.info.geometries,
 console.log(`   géométries ${before10.geo} -> ${after10.geo} | objets ${before10.objets} -> ${after10.objets}`);
 ok("10 runs: géométries stables", after10.geo <= before10.geo + 6, `${before10.geo} -> ${after10.geo}`);
 ok("10 runs: objets de scène stables", after10.objets <= before10.objets * 1.5 + 20);
-ok("10 runs: chunks bornés", cycle.every(c => c.chunks <= 25) && after10.chunks === 25);
+ok("10 runs: chunks bornés",
+   cycle.every(c => c.chunks <= (2 * rayonChunk + 1) ** 2)
+   && after10.chunks === (2 * rayonChunk + 1) ** 2);
 ok("10 runs: télémétrie plafonnée", after10.runs <= 20, `${after10.runs} runs stockées`);
 
 console.log("\n=== PERFORMANCE ===");
@@ -384,7 +389,7 @@ console.log(`   ${perf.info.calls} calls | ${perf.info.triangles ?? perf.info.tr
   ok("perf: peu d'atlas de texture", tex.distinctes <= 4, `${tex.distinctes} distincte(s)`);
   ok("perf: aucune texture de grand format", tex.plusGrande <= 1024, `${tex.plusGrande} px`);
 }
-ok("perf: chunks bornés en course", perf.chunks === 25);
+ok("perf: chunks bornés en course", perf.chunks === (2 * rayonChunk + 1) ** 2);
 
 const real = errors.filter(e => !e.includes("favicon"));
 ok("runtime: aucune erreur console", real.length === 0, real.length ? JSON.stringify(real.slice(0,4)) : "propre");

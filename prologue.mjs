@@ -83,7 +83,11 @@ export const SCENE = {
   // champ de 55°, ce qui donne une demi-largeur d'environ 6,8 unités au niveau
   // du joueur. Une tour posée à x −9 tombait hors cadre. À x −5 et 9 unités
   // devant, elle entre dans l'image en entier, hauteur comprise.
-  tour:        { x: -4.5, z: -26.0 },
+  // Reculée en 0.7.2 : la tour est passée de sept à treize unités de haut et
+  // débordait du cadre d'ouverture. Le rapport hauteur/distance est le même
+  // qu'avant — c'est la seule façon de la garder entière dans l'image tout en
+  // la rendant imposante.
+  tour:        { x: -7.5, z: -44.0 },
   sac:         { x: 2.2,  z: -6.0 },    // devant, à portée de regard
   // Les trois distances suivantes ont été MESURÉES avant d'être écrites. La
   // première version posait les traces à 260 unités et la fin à 760 : un
@@ -388,50 +392,154 @@ export function createPrologue(deps) {
     groupe.position.set(bx, y, bz);
 
     const pierre = new THREE.MeshStandardMaterial({ color: 0x8d9299, roughness: 0.9 });
+    const pierreSombre = new THREE.MeshStandardMaterial({ color: 0x6d7176, roughness: 0.95 });
+    const bois = new THREE.MeshStandardMaterial({ color: 0x6b4f30, roughness: 0.95 });
+    const metal = new THREE.MeshStandardMaterial({
+      color: 0x8a7d63, roughness: 0.55, metalness: 0.45 });
 
-    // Quatre piliers serrés, deux étages : c'est l'étagement qui fait lire
-    // « tour » plutôt que « ruines ». Une arche posée dessus, essayée d'abord,
-    // se lisait de profil comme un mur brun en travers de l'image.
-    const R = 1.15;
-    const coins = [[-R, -R], [R, -R], [-R, R], [R, R]];
-    coins.forEach(([ox, oz], i) => {
-      const bas = decors.poser("ruine_pilier", { x: ox, y: 0, z: oz, scale: 1.05 });
-      if (bas) groupe.add(bas);
-      // Le pilier arrière-gauche a cédé : c'est lui qui raconte le tremblement.
-      if (i === 2) return;
-      const haut = decors.poser("ruine_pilier", { x: ox * 0.7, y: 3.25, z: oz * 0.7, scale: 0.72 });
-      if (haut) groupe.add(haut);
+    /* LA TOUR-BALISE (refaite en 0.7.2).
+     *
+     * Celle de la 0.7 faisait sept unités — trois fois et demie la taille du
+     * personnage. Sur la capture d'ouverture elle se lisait comme un échafaudage
+     * gris posé dans un coin, et le §28 demande l'inverse : une silhouette
+     * reconnaissable à plusieurs dizaines de mètres.
+     *
+     * Elle fait maintenant treize unités et se lit en trois temps, comme une
+     * vraie construction : un socle large qui l'ancre, un fût qui monte, une
+     * tête qui porte le signal. C'est cet étagement qui fait « tour » — quatre
+     * piliers de même hauteur faisaient « ruines ».
+     *
+     * Elle raconte aussi son métier : des poutres de contreventement, une
+     * échelle de maintenance, des haubans. Un éclaireur monte là-haut.
+     */
+
+    // --- SOCLE : ce qui l'ancre au sol -----------------------------------
+    const socle = new THREE.Mesh(new THREE.CylinderGeometry(3.1, 3.7, 0.9, 8), pierreSombre);
+    socle.position.y = 0.35;
+    socle.rotation.y = 0.39;
+    groupe.add(socle);
+
+    const marche = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.8, 0.55, 8), pierre);
+    marche.position.y = 1.05;
+    marche.rotation.y = 0.39;
+    groupe.add(marche);
+
+    // --- FÛT : quatre montants qui convergent ----------------------------
+    // Ils se resserrent en montant. Une tour à montants parallèles se lit comme
+    // une cage ; une tour qui se resserre se lit comme quelque chose de bâti.
+    const H_FUT = 8.2;
+    const R_BAS = 1.9, R_HAUT = 1.05;
+    const coins = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
+    const montants = [];
+    coins.forEach(([sx, sz], i) => {
+      // Le montant arrière-gauche est ROMPU à mi-hauteur : c'est lui qui
+      // raconte le séisme, et c'est ce qui déséquilibre la silhouette.
+      const rompu = i === 2;
+      const h = rompu ? H_FUT * 0.46 : H_FUT;
+      const geo = new THREE.CylinderGeometry(0.19, 0.26, h, 5);
+      const m = new THREE.Mesh(geo, bois);
+      const rBas = R_BAS, rHaut = rompu ? R_BAS - (R_BAS - R_HAUT) * 0.46 : R_HAUT;
+      m.position.set(sx * (rBas + rHaut) / 2, 1.3 + h / 2, sz * (rBas + rHaut) / 2);
+      // L'inclinaison qui fait converger : mesurée, pas devinée.
+      m.rotation.z = -sx * Math.atan2(rBas - rHaut, h);
+      m.rotation.x = sz * Math.atan2(rBas - rHaut, h);
+      groupe.add(m);
+      montants.push(m);
     });
 
-    // Plateforme de signal : un hexagone de pierre, assez fin pour ne pas
-    // écraser la silhouette, assez large pour porter le cristal.
-    const plateforme = new THREE.Mesh(
-      new THREE.CylinderGeometry(1.6, 1.85, 0.42, 6), pierre);
-    plateforme.position.y = 3.35;
+    // Contreventement : deux ceintures de poutres horizontales. Sans elles la
+    // tour n'a pas l'air de tenir, et « avoir l'air de tenir » est la moitié du
+    // travail d'une structure.
+    for (const [hy, r] of [[3.4, 1.62], [6.4, 1.28]]) {
+      for (let k = 0; k < 4; k++) {
+        const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+        const poutre = new THREE.Mesh(new THREE.BoxGeometry(r * 2.0, 0.16, 0.16), bois);
+        poutre.position.set(0, hy, 0);
+        poutre.rotation.y = a;
+        poutre.position.x = Math.cos(a + Math.PI / 2) * r * 0.72;
+        poutre.position.z = Math.sin(a + Math.PI / 2) * r * 0.72;
+        groupe.add(poutre);
+      }
+    }
+
+    // Échelle de maintenance : c'est le détail qui dit qu'un homme monte ici.
+    for (let k = 0; k < 9; k++) {
+      const barreau = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.07, 0.07), metal);
+      barreau.position.set(0, 1.7 + k * 0.82, R_BAS - k * 0.09);
+      groupe.add(barreau);
+    }
+
+    // --- TÊTE : la plateforme du signal ----------------------------------
+    const plateforme = new THREE.Mesh(new THREE.CylinderGeometry(1.95, 2.25, 0.42, 6), pierre);
+    plateforme.position.y = 9.7;
     plateforme.rotation.y = 0.4;
+    // Elle est DÉPLACÉE : le séisme l'a fait riper sur ses appuis.
+    plateforme.rotation.z = 0.055;
+    plateforme.position.x = 0.22;
     groupe.add(plateforme);
 
-    const couronne = new THREE.Mesh(
-      new THREE.CylinderGeometry(1.05, 1.25, 0.3, 6), pierre);
-    couronne.position.y = 5.65;
-    couronne.rotation.y = 0.4;
-    groupe.add(couronne);
+    // Garde-corps ajouré : quatre poteaux et une lisse. Il découpe le ciel.
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2;
+      const poteau = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.85, 4), metal);
+      poteau.position.set(Math.cos(a) * 1.75 + 0.22, 10.3, Math.sin(a) * 1.75);
+      groupe.add(poteau);
+    }
+    const lisse = new THREE.Mesh(new THREE.TorusGeometry(1.75, 0.055, 4, 6), metal);
+    lisse.rotation.x = Math.PI / 2;
+    lisse.position.set(0.22, 10.72, 0);
+    groupe.add(lisse);
 
-    // LE SIGNAL. Il fonctionne encore : c'est la raison pour laquelle le convoi
-    // est parti sans revenir. Il tourne lentement — c'est ce mouvement qui
-    // attire l'œil depuis le point de réveil.
-    const signal = cristal(0.6);
-    signal.position.set(0, 6.6, 0);
+    // --- LE SIGNAL : la balise, et elle FONCTIONNE ------------------------
+    // Une lanterne de pierre ouverte, et le cristal dedans. C'est la première
+    // chose que le joueur voit du jeu, et la preuve que la mission précédente
+    // a été accomplie.
+    const lanterne = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.92, 1.5, 6, 1, true),
+                                    pierreSombre);
+    lanterne.material.side = THREE.DoubleSide;
+    lanterne.position.set(0.22, 11.6, 0);
+    groupe.add(lanterne);
+
+    const chapeau = new THREE.Mesh(new THREE.ConeGeometry(1.15, 0.9, 6), pierre);
+    chapeau.position.set(0.22, 12.75, 0);
+    groupe.add(chapeau);
+
+    const signal = cristal(0.78);
+    signal.position.set(0.22, 11.6, 0);
     signal.name = "prologue-signal";
     groupe.add(signal);
 
-    const halo = new THREE.PointLight(0x8ff0e2, 3.2, 18, 2);
-    halo.position.set(0, 6.6, 0);
+    const halo = new THREE.PointLight(0x8ff0e2, 6.5, 34, 2);
+    halo.position.set(0.22, 11.6, 0);
     groupe.add(halo);
+    groupe.userData.halo = halo;
 
-    // Le pilier tombé, en travers de sa propre base.
-    const tombe = decors.poser("ruine_pilier", { x: -2.4, y: 0.42, z: 1.9, scale: 0.95 });
-    if (tombe) { tombe.rotation.z = 1.42; tombe.rotation.y = 0.7; groupe.add(tombe); }
+    // --- LES DÉGÂTS, et ils doivent être FRAIS ---------------------------
+    // Le haut du montant rompu, tombé au pied de la tour.
+    const troncon = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.19, 0.24, H_FUT * 0.5, 5), bois);
+    troncon.position.set(-3.1, 0.42, 2.4);
+    troncon.rotation.set(0.1, 0.6, 1.44);
+    groupe.add(troncon);
+
+    // Un hauban rompu qui pend depuis la plateforme : il bouge encore un peu.
+    const hauban = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 5.6, 4), metal);
+    hauban.position.set(-1.5, 7.4, 1.1);
+    hauban.rotation.set(0.22, 0, 0.34);
+    groupe.add(hauban);
+    groupe.userData.hauban = hauban;
+
+    // Blocs du socle arrachés, et poussière de pierre encore claire dessous.
+    const eclats = [
+      [-2.9, 1.7, 0.55, 0.42], [-3.6, 3.1, 0.42, 1.7], [2.7, 2.2, 0.5, 0.9],
+      [-1.6, 4.4, 0.34, 2.4], [3.3, 4.6, 0.3, 0.2],
+    ];
+    for (const [dx, dz, sc, rot] of eclats) {
+      const bloc = new THREE.Mesh(new THREE.DodecahedronGeometry(sc, 0), pierre);
+      bloc.position.set(dx, sc * 0.55, dz);
+      bloc.rotation.set(rot, rot * 1.7, rot * 0.6);
+      groupe.add(bloc);
+    }
 
     // Débris : ils dessinent la trajectoire de la chute, du pied de la tour
     // vers le point où le personnage s'est réveillé.
@@ -729,7 +837,7 @@ export function createPrologue(deps) {
     props.length = 0;
     for (const a of acteurs) scene.remove(a.objet);
     acteurs.length = 0;
-    document.body.classList.remove("pro-fige");
+    document.body.classList.remove("pro-fige", "prologue");
     poserLacet(lacetDepart);
     poserInclinaison(inclinaisonDepart);
     if (voile) { voile.hidden = true; voile.className = ""; }
@@ -765,7 +873,11 @@ export function createPrologue(deps) {
     for (const k of Object.keys(game.state.inventory)) game.state.inventory[k] = 0;
     game.state.weight = 0;
 
-    document.body.classList.add("pro-fige");
+    // `prologue` reste posée tout le temps que dure la mise en scène ;
+    // `pro-fige` ne dure que le voile. Le bandeau d'introduction du monde
+    // procédural doit disparaître pour les deux — il s'affichait par-dessus les
+    // répliques du personnage, deux textes en même temps.
+    document.body.classList.add("prologue", "pro-fige");
     if (voile) { voile.hidden = false; voile.className = ""; }
     monterDecor();
 
@@ -814,10 +926,30 @@ export function createPrologue(deps) {
     rafraichirAction();
     poserScenesLointaines(pz);
 
+    // Le cadrage de l'ouverture est tenu jusqu'à l'ordre de fuir. Le plan du
+    // regard, lui, descend encore plus bas — il repose par-dessus.
+    if (!franchies.has("FOG_REVEALED") && franchies.has("PROLOGUE_START")) {
+      viserInclinaison(INCLINAISON_OUVERTURE, delta, 0.35);
+    }
+
     // Le signal tourne lentement. Un objet qui bouge dans une image immobile
     // est le seul « indice » que le prologue s'autorise sans texte.
     const tour = props.find((p) => p.name === "prologue-tour");
-    if (tour?.userData.signal) tour.userData.signal.rotation.y += delta * 0.8;
+    if (tour?.userData.signal) {
+      tour.userData.signal.rotation.y += delta * 0.8;
+      // LA BALISE BAT (§29). Une lumière fixe est un décor ; une lumière qui
+      // pulse est un appareil en marche — et c'est tout ce que le joueur a
+      // besoin de comprendre pour savoir que sa mission précédente a réussi.
+      // Deux battements par seconde environ, jamais éteinte.
+      const battement = 0.78 + 0.22 * Math.sin(temps * 2.1)
+                             + 0.10 * Math.sin(temps * 5.3);
+      if (tour.userData.halo) tour.userData.halo.intensity = 6.5 * battement;
+      tour.userData.signal.scale.setScalar(0.94 + 0.06 * battement);
+      // Le hauban rompu oscille encore : la chute est récente.
+      if (tour.userData.hauban) {
+        tour.userData.hauban.rotation.z = 0.34 + Math.sin(temps * 1.3) * 0.035;
+      }
+    }
     const anc = props.find((p) => p.name === "prologue-pilier-ancien");
     if (anc?.userData.cristal) anc.userData.cristal.rotation.y += delta * 0.35;
 
@@ -850,6 +982,23 @@ export function createPrologue(deps) {
       terminer("distance");
     }
   }
+
+  /* L'INCLINAISON DE TOUTE L'OUVERTURE (§45).
+   *
+   * La caméra de jeu est à 0,5 : haute, penchée vers le sol. C'est juste pour
+   * marcher, et c'est faux pour regarder quoi que ce soit de vertical. Avec
+   * elle, le haut du cadre se situe à un demi-degré au-dessus de l'horizontale,
+   * et une tour de treize unités à quarante-quatre mètres sort de l'image par
+   * le haut — vérifié sur la capture d'ouverture, où l'on ne voyait que ses
+   * pieds et son échelle.
+   *
+   * L'ouverture tout entière est donc cadrée à 0,22, jusqu'à ce que le joueur
+   * reçoive l'ordre de fuir. La tour tient dans l'image, la Brume aussi quand
+   * il se retourne, et le monde a un horizon au lieu d'un tapis. La caméra
+   * remonte à sa valeur de jeu au moment où le joueur en reprend la main —
+   * c'est-à-dire au moment où il en a besoin pour courir.
+   */
+  const INCLINAISON_OUVERTURE = 0.22;
 
   // --- 1. le réveil ------------------------------------------------------
   function sequenceReveil() {
@@ -960,7 +1109,7 @@ export function createPrologue(deps) {
   // un ordre, c'est un sous-titre.
   function sequenceOrdre(delta) {
     const enPlace = viserLacet(lacetDepart, delta, 2.6);
-    viserInclinaison(inclinaisonDepart, delta, 0.7);
+    viserInclinaison(inclinaisonDepart, delta, 0.55);
     if (enPlace && depuisEtape > 1.2) {
       document.body.classList.remove("pro-fige");
       dire(REPLIQUES.ordre, { duree: 2.6, ordre: true });

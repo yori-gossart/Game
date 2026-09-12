@@ -151,7 +151,9 @@ const negatif = await H(() => ({
     return mauvais;
   })()
 }));
-ok("négatif: 25 chunks générés en coordonnées négatives", negatif.chunks === 25,
+const rayonChunk = await H(() => window.HORIZON.engine.chunkRadius);
+const nChunks = (2 * rayonChunk + 1) ** 2;
+ok(`négatif: ${nChunks} chunks générés en coordonnées négatives`, negatif.chunks === nChunks,
    `${negatif.chunks} chunks, ${negatif.cles} clés négatives`);
 ok("négatif: aucune couleur de sommet hors bornes", negatif.couleursHorsBorne === 0,
    `${negatif.couleursHorsBorne} géométries fautives`);
@@ -174,8 +176,17 @@ const fogFar = await H(() => {
 });
 ok("bord: la scène a bien un brouillard linéaire", fogFar !== null,
    fogFar ? `near ${fogFar.near} far ${fogFar.far}` : "absent");
-ok("bord: le brouillard sature avant la portée du terrain (2 × 32 = 64 u)",
-   fogFar && fogFar.far <= 64, `far ${fogFar && fogFar.far}`);
+/* La portée du terrain est CHUNK_RADIUS × CHUNK_SIZE, et elle a doublé en
+   0.7.2 (rayon 2 → 3) pour que le monde cesse de s'effacer à vingt-six unités.
+   L'assertion lit donc la règle au lieu de porter « 64 » écrit à la main : ce
+   qui doit rester vrai, c'est que le brouillard soit opaque AVANT le bord du
+   monde, quel que soit ce bord. */
+const porteeTerrain = await H(() => {
+  const e = window.HORIZON.engine;
+  return e.chunkRadius * e.chunkSize;
+});
+ok(`bord: le brouillard sature avant la portée du terrain (${porteeTerrain} u)`,
+   fogFar && fogFar.far <= porteeTerrain, `far ${fogFar && fogFar.far}`);
 ok("bord: le plan lointain de la caméra dépasse le brouillard",
    portee.far > (fogFar ? fogFar.far : 0), `caméra ${portee.far} > brouillard ${fogFar && fogFar.far}`);
 // Le plan d'eau suit le joueur ; s'il n'allait pas au-delà du brouillard, son
