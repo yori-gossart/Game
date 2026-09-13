@@ -188,6 +188,9 @@ export function createPrologue(deps) {
     terrainHeight, contaminable, sons, degagerZone = () => {},
     lireLacet = () => 0, poserLacet = () => {},
     lireInclinaison = () => 0.5, poserInclinaison = () => {},
+    /* Tirage déterministe fourni par le moteur : voir main.mjs. Le repli n'est
+       là que pour les bancs qui construisent le prologue à la main. */
+    tirage = () => 0.5,
     INCLINAISON_BASSE = 0.14,
     log = () => {},
   } = deps;
@@ -273,6 +276,12 @@ export function createPrologue(deps) {
   let lacetDepart = 0;          // le cap de la caméra avant le plan du regard
   let inclinaisonDepart = 0.5;  // et son inclinaison, à rendre après
   let reactionRestante = 0;     // secondes de brume ralentie
+  let reculDepart = 0;          // le recul du mur est ANIMÉ, pas instantané
+  let reculCible = 0;
+  let reculAvance = 1;
+  let eclatPilier = 0;          // l'éclat du cristal au moment de la réaction
+  const RECUL_DUREE = 1.7;      // secondes : assez pour être vu, assez court
+                                // pour ne pas ressembler à une cinématique
 
   const horodatage = {};        // étape -> secondes, pour mesurer les parcours
 
@@ -1363,6 +1372,8 @@ export function createPrologue(deps) {
     tracesPosees = false;
     pilierPose = false;
     reactionRestante = 0;
+    reculAvance = 1;
+    eclatPilier = 0;
     piedsAncrage = player.position.z;
     piedsAncrageX = player.position.x;
     lacetDepart = lireLacet();
@@ -1388,7 +1399,11 @@ export function createPrologue(deps) {
 
     // La Brume est tenue en place pendant le réveil : on ne meurt pas dans une
     // cinématique d'ouverture.
-    fogFige = player.position.z + 52 + Math.random() * 8;   // 52 à 60 u, §12
+    // 52 à 60 u (§12), tiré du MONDE et non de Math.random() : à graine
+    // imposée, l'ouverture doit se rejouer à l'identique. Le tirage dépend de
+    // la position d'ancrage, donc deux parties sur la même graine s'ouvrent
+    // pareil, et deux graines différentes ne s'ouvrent pas pareil.
+    fogFige = player.position.z + 52 + tirage(Math.round(player.position.z)) * 8;
     plafondBrume = fogFige;
     game.setFogZ(fogFige);
 
@@ -1457,15 +1472,34 @@ export function createPrologue(deps) {
       // deuxième temps sec : deux lumières au même rythme sont le même objet,
       // et tout l'intérêt de cette structure est de n'être pas la même.
       const souffle = 0.62 + 0.38 * Math.sin(temps * 0.42);
-      if (anc.userData.halo) anc.userData.halo.intensity = 4.2 * souffle;
-      anc.userData.cristal.scale.setScalar(0.92 + 0.08 * souffle);
+      // L'ÉCLAT. Sans lui, le mur reculait sans qu'on sache pourquoi : le
+      // joueur voyait un effet, pas une cause. Le cristal blanchit et enfle
+      // à l'instant où la Brume cède, puis retombe en deux secondes et demie.
+      if (eclatPilier > 0) eclatPilier = Math.max(0, eclatPilier - delta / 2.5);
+      const pic = eclatPilier * eclatPilier;
+      if (anc.userData.halo) {
+        anc.userData.halo.intensity = 4.2 * souffle + 26 * pic;
+        anc.userData.halo.distance = 26 + 30 * pic;
+      }
+      anc.userData.cristal.scale.setScalar(0.92 + 0.08 * souffle + 0.55 * pic);
+      const m = anc.userData.cristal.material;
+      if (m) m.emissiveIntensity = 1.35 + 2.6 * pic;
     }
 
     // La réaction du pilier : la Brume est repoussée puis retenue quelques
     // secondes. Effet COURT — le §27 interdit une victoire permanente.
     if (reactionRestante > 0) {
       reactionRestante -= delta;
-      game.setFogZ(Math.max(game.state.fogZ, pz + 120));
+      if (reculAvance < 1) {
+        // Départ vif, arrivée molle : un mur qui recule décélère, il ne
+        // s'arrête pas net. C'est la seule courbe du prologue.
+        reculAvance = Math.min(1, reculAvance + delta / RECUL_DUREE);
+        const e = 1 - Math.pow(1 - reculAvance, 3);
+        game.setFogZ(Math.max(game.state.fogZ,
+                              reculDepart + (reculCible - reculDepart) * e));
+      } else {
+        game.setFogZ(Math.max(game.state.fogZ, pz + 120));
+      }
     }
 
     switch (etape) {
@@ -1725,8 +1759,15 @@ export function createPrologue(deps) {
 
     setTimeout(() => {
       if (!actif) return;
+      // La première version téléportait le mur de cent vingt unités en une
+      // image. Mécaniquement c'était le bon répit ; à l'écran, c'était un
+      // défaut d'affichage. On mémorise l'origine et la cible : `update` fait
+      // le recul, et le §14 demande qu'on le VOIE reculer.
+      reculDepart = game.state.fogZ;
+      reculCible = player.position.z + 150;
+      reculAvance = 0;
       reactionRestante = 9;
-      game.setFogZ(player.position.z + 150);
+      eclatPilier = 1;
       dire(REPLIQUES.reaction, { duree: 4.6 });
       franchir("FOG_REACTION");
     }, 1400);

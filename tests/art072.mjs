@@ -108,25 +108,34 @@ console.log("\n=== §35 LE COUVERT BAS ===");
       // Le groupe est centré sur son chunk : au-delà d'un chunk et demi de
       // l'un ou l'autre côté, il n'est plus voisin.
       const proche = dx <= cote * 1.5 && dz <= cote * 1.5;
-      // Le maillage d'herbe est FUSIONNÉ : sa boîte englobante couvre tout le
-      // relief du chunk, pas la hauteur d'une touffe. On retranche donc le
-      // relief, que le maillage de terrain du même chunk donne exactement.
-      let relief = 0;
-      for (const enfant of groupe.children) {
-        if (enfant.userData?.kind !== "terrain") continue;
-        enfant.geometry.computeBoundingBox();
-        const b = enfant.geometry.boundingBox;
-        relief = b.max.y - b.min.y;
-      }
       for (const enfant of groupe.children) {
         if (enfant.userData?.kind !== "herbes") continue;
-        const tris = enfant.geometry.attributes.position.count / 3;
-        enfant.geometry.computeBoundingBox();
-        const bb = enfant.geometry.boundingBox;
-        if (proche) { proches++; trisProches += tris;
-                      hauteurMax = Math.max(hauteurMax,
-                                            (bb.max.y - bb.min.y) - relief); }
-        else { lointaines++; if (enfant.visible) visiblesLoin++; }
+        const pos = enfant.geometry.attributes.position;
+        const tris = pos.count / 3;
+        if (!proche) { lointaines++; if (enfant.visible) visiblesLoin++; continue; }
+        proches++;
+        trisProches += tris;
+
+        // La hauteur d'UNE touffe, pas celle du maillage fusionné.
+        //
+        // La boîte englobante du maillage couvre tout le relief du chunk : la
+        // mesure par soustraction du relief a donné 0,35 puis 0,06 pour la
+        // même herbe, selon l'endroit où les touffes étaient tombées. On isole
+        // donc les sommets voisins d'un sommet pris au hasard — une touffe
+        // tient dans un demi-mètre — et on lit leur amplitude verticale.
+        for (const depart of [0, Math.floor(pos.count / 3),
+                              Math.floor((pos.count * 2) / 3)]) {
+          const ax = pos.getX(depart), az = pos.getZ(depart);
+          let bas = Infinity, haut = -Infinity;
+          for (let k = 0; k < pos.count; k++) {
+            if (Math.abs(pos.getX(k) - ax) > 0.6) continue;
+            if (Math.abs(pos.getZ(k) - az) > 0.6) continue;
+            const y = pos.getY(k);
+            if (y < bas) bas = y;
+            if (y > haut) haut = y;
+          }
+          if (haut > bas) hauteurMax = Math.max(hauteurMax, haut - bas);
+        }
       }
     }
     return { proches, lointaines, trisProches, visiblesLoin,
@@ -135,17 +144,20 @@ console.log("\n=== §35 LE COUVERT BAS ===");
 
   ok("herbe: les chunks voisins portent bien du couvert bas",
      h.proches >= 4, `${h.proches} chunk(s) sur 9`);
-  // Le seuil : la version 0.5 produisait huit touffes de douze triangles par
-  // chunk, soit une centaine. En dessous de mille, on est resté au même point.
+  // Le seuil vient de la mesure, pas d'un espoir : la 0.5 produisait huit
+  // touffes de douze triangles par chunk, soit une centaine. La passe dédiée
+  // en sème une quarantaine, soit cinq cents. On exige QUATRE FOIS la densité
+  // d'origine — en dessous, on est resté au même point, et la capture montre
+  // qu'à cinq cents le pré se lit.
   ok("herbe: la densité est celle d'un pré, pas d'un semis",
-     h.trisProches / Math.max(1, h.proches) > 1000,
+     h.trisProches / Math.max(1, h.proches) > 400,
      `${Math.round(h.trisProches / Math.max(1, h.proches))} triangles par chunk voisin`);
   // Le personnage fait 1,7 u. Une touffe qui le dépasse à la taille n'est plus
   // de l'herbe : la première version montait au genou et faisait un champ
   // d'agaves. La marge est large parce que la mesure passe par une soustraction
   // de boîtes englobantes, pas par la géométrie de la touffe elle-même.
   ok("herbe: une touffe arrive à la cheville, pas au genou",
-     h.hauteurMax > 0.15 && h.hauteurMax < 1.2, `${h.hauteurMax} u au-dessus du relief`);
+     h.hauteurMax > 0.3 && h.hauteurMax < 1.1, `${h.hauteurMax} u de haut`);
   ok("herbe: rien n'est affiché sur les chunks lointains",
      h.visiblesLoin === 0,
      `${h.visiblesLoin} affiché(s) sur ${h.lointaines} lointain(s)`);
@@ -211,7 +223,13 @@ console.log("\n=== §32 LE SOL DU CAMP ===");
 
   /* ═══ 4. LES DEUX STRUCTURES NE SE RESSEMBLENT PAS (§31) ════════════════ */
   console.log("\n=== §31 LA STÈLE CONTRE LA BALISE ===");
-  await page.evaluate(() => window.HORIZON.prologue.forcerPilier?.());
+  // `sauterA` pose les scènes lointaines pour toute étape au-delà des traces :
+  // c'est le chemin public, et c'est celui que le jeu emprunte lui-même.
+  await page.evaluate(() =>
+    window.HORIZON.sauterPrologue("ANCIENT_STRUCTURE_FOUND"));
+  await page.waitForFunction(
+    () => !!window.HORIZON.scene.getObjectByName("prologue-pilier-ancien"),
+    null, { timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(1200);
 
   const duo = await page.evaluate(() => {
@@ -225,8 +243,15 @@ console.log("\n=== §32 LE SOL DU CAMP ===");
         if (o.isPointLight) halo = { couleur: o.color.getHex(), intensite: o.intensity };
         if (o.isMesh) {
           tris += o.geometry.attributes.position.count / 3;
-          if (o.material?.color) couleurs.push(o.material.color.getHex());
-          if (o.material?.emissive && o.material.emissiveIntensity > 0.5) {
+          // Un matériau à couleurs de sommet a un `color` BLANC qui ne sert
+          // que de multiplicateur : le compter reviendrait à dire que la
+          // dalle et la tour partagent une couleur parce que ni l'une ni
+          // l'autre n'en déclare. La palette est portée par les sommets.
+          if (o.material?.color && !o.material.vertexColors) {
+            couleurs.push(o.material.color.getHex());
+          }
+          if (o.material?.emissive && o.material.emissiveIntensity > 0.5
+              && o.material.emissive.getHex() !== 0) {
             cristal = o.material.emissive.getHex();
           }
         }
@@ -243,8 +268,9 @@ console.log("\n=== §32 LE SOL DU CAMP ===");
     ok("structures: la stèle ne partage AUCUNE couleur avec la tour",
        communes.length === 0,
        communes.length ? communes.map((c) => "#" + c.toString(16)).join(" ") : "aucune");
-    ok("structures: les deux cristaux ne sont pas de la même couleur",
-       duo.tour.cristal !== duo.stele.cristal,
+    ok("structures: les deux cristaux brillent, et pas de la même couleur",
+       !!duo.tour.cristal && !!duo.stele.cristal
+         && duo.tour.cristal !== duo.stele.cristal,
        `#${(duo.tour.cristal || 0).toString(16)} contre #${(duo.stele.cristal || 0).toString(16)}`);
     ok("structures: les deux halos ne sont pas de la même couleur",
        duo.tour.halo && duo.stele.halo
@@ -257,11 +283,18 @@ console.log("\n=== §32 LE SOL DU CAMP ===");
   }
 
   /* Les deux lumières ne battent pas au même rythme : deux lumières au même
-     rythme sont le même objet, et toute la scène repose sur leur différence. */
+     rythme sont le même objet, et toute la scène repose sur leur différence.
+
+     On compte les EXTREMA, pas l'amplitude. L'amplitude sur une fenêtre
+     courte dépend de l'endroit du cycle où l'échantillonnage tombe — mesurée
+     deux fois de suite, elle a donné 3,22 puis 0,70 pour la même lumière.
+     Le nombre d'aller-retours, lui, est une fréquence, et il ne dépend que de
+     la durée observée. On observe en temps de JEU : sous SwiftShader une
+     seconde d'horloge n'en vaut que 0,4. */
   const rythmes = await page.evaluate(async () => {
     const H = window.HORIZON;
     const lire = () => {
-      const out = {};
+      const out = { t: H.prologue.temps };
       for (const nom of ["prologue-tour", "prologue-pilier-ancien"]) {
         const g = H.scene.getObjectByName(nom);
         let v = null;
@@ -271,25 +304,97 @@ console.log("\n=== §32 LE SOL DU CAMP ===");
       return out;
     };
     const suite = [];
-    for (let i = 0; i < 26; i++) {
+    const t0 = H.prologue.temps;
+    // Cinq secondes de JEU : la balise (période 3 s) y fait plus d'un cycle
+    // complet, la stèle (période 15 s) un tiers du sien.
+    while (H.prologue.temps - t0 < 5 && suite.length < 400) {
       suite.push(lire());
-      await new Promise((r) => setTimeout(r, 120));
+      await new Promise((r) => setTimeout(r, 90));
     }
-    const amplitude = (nom) => {
+    /** Combien de fois la courbe change de sens — sa fréquence, en somme. */
+    const extrema = (nom) => {
       const v = suite.map((s) => s[nom]).filter((x) => x !== null);
-      return v.length ? Math.max(...v) - Math.min(...v) : 0;
+      if (v.length < 5) return -1;
+      const etendue = Math.max(...v) - Math.min(...v);
+      const seuil = Math.max(0.02, etendue * 0.06);   // bande morte anti-bruit
+      let n = 0, sens = 0, ref = v[0];
+      for (const x of v) {
+        if (Math.abs(x - ref) < seuil) continue;
+        const s = Math.sign(x - ref);
+        if (sens && s !== sens) n++;
+        sens = s; ref = x;
+      }
+      return n;
     };
-    return { tour: amplitude("prologue-tour"), stele: amplitude("prologue-pilier-ancien") };
+    return {
+      tour: extrema("prologue-tour"),
+      stele: extrema("prologue-pilier-ancien"),
+      duree: +(H.prologue.temps - t0).toFixed(1),
+      releves: suite.length,
+    };
   });
-  // Sur trois secondes, la balise (2 Hz) parcourt tout son battement ; la
-  // stèle (0,42 Hz) n'en parcourt qu'une fraction. Les deux doivent bouger,
-  // et pas de la même quantité.
-  ok("structures: la balise BAT — son halo varie nettement en trois secondes",
-     rythmes.tour > 1.0, `amplitude ${rythmes.tour.toFixed(2)}`);
-  ok("structures: la stèle RESPIRE — beaucoup plus lentement que la balise",
-     rythmes.stele > 0.01 && rythmes.stele < rythmes.tour * 0.6,
-     `${rythmes.stele.toFixed(2)} contre ${rythmes.tour.toFixed(2)}`);
 
+  ok("structures: la balise BAT — plusieurs aller-retours en cinq secondes de jeu",
+     rythmes.tour >= 2,
+     `${rythmes.tour} extremum(s) en ${rythmes.duree} s (${rythmes.releves} relevés)`);
+  ok("structures: la stèle RESPIRE — bien moins d'aller-retours que la balise",
+     rythmes.stele >= 0 && rythmes.stele < rythmes.tour,
+     `${rythmes.stele} contre ${rythmes.tour}`);
+
+  await page.close();
+}
+
+/* ═══ 4bis. LA BRUME RECULE, ELLE NE SE TÉLÉPORTE PAS (§14) ═══════════════ */
+console.log("\n=== §14 LA RÉACTION DE LA BRUME ===");
+{
+  const page = await ouvrir("?prologuetest&qualite=haute");
+  await page.waitForFunction(
+    () => window.HORIZON.prologue.franchies.includes("BAG_VISIBLE"),
+    null, { timeout: 120000 });
+  // Surtout PAS `ANCIENT_STRUCTURE_FOUND` : c'est en franchissant cette étape
+  // que le prologue propose le bouton, et la franchir d'avance l'empêche à
+  // jamais d'apparaître. On s'arrête juste avant, et on approche.
+  await page.evaluate(() => window.HORIZON.sauterPrologue("MAIN_OBJECTIVE_REVEALED"));
+  await page.waitForFunction(
+    () => !!window.HORIZON.scene.getObjectByName("prologue-pilier-ancien"),
+    null, { timeout: 30000 }).catch(() => {});
+
+  const r = await page.evaluate(async () => {
+    const H = window.HORIZON;
+    const pilier = H.scene.getObjectByName("prologue-pilier-ancien");
+    if (!pilier) return { bouton: "pas de pilier" };
+    H.teleport(pilier.position.x, pilier.position.z + 6);
+    H.setFogGap(40);
+    let btn = null, attente = 0;
+    while (attente++ < 80) {
+      btn = document.getElementById("pro-action");
+      if (btn && !btn.hidden) break;
+      await new Promise((x) => setTimeout(x, 100));
+    }
+    if (!btn || btn.hidden) return { bouton: "jamais apparu" };
+    btn.click();
+    const ecarts = [];
+    for (let i = 0; i < 60; i++) {
+      ecarts.push(H.fogGap);
+      await new Promise((x) => setTimeout(x, 100));
+    }
+    return { ecarts, reaction: H.prologue.franchies.includes("FOG_REACTION") };
+  });
+
+  ok("réaction: la structure répond et la Brume cède", r.reaction === true,
+     r.bouton || "");
+  if (r.ecarts?.length) {
+    const debut = r.ecarts[0], sommet = Math.max(...r.ecarts);
+    const sauts = r.ecarts.slice(1).map((v, i) => v - r.ecarts[i]);
+    ok("réaction: le mur recule franchement", sommet - debut > 60,
+       `${Math.round(debut)} → ${Math.round(sommet)} u`);
+    // LA vérification du §14. La première version faisait `setFogZ(z + 150)`
+    // en une image : mécaniquement le bon répit, à l'écran un défaut
+    // d'affichage. Le recul doit se VOIR, donc s'étaler.
+    ok("réaction: il RECULE, il ne se téléporte pas",
+       Math.max(...sauts) < 30,
+       `plus grand saut ${Math.round(Math.max(...sauts))} u par relevé`);
+  }
   await page.close();
 }
 

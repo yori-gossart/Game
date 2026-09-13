@@ -80,9 +80,9 @@ bâtie dans un lac**, et seule une capture l'a montré.
 
 ### 2.3 La lumière — §21, §22
 
-Soleil descendu de **60° à 33°** d'élévation, réchauffé et renforcé (2.35 →
-2.72) ; ambiante hémisphérique divisée par 1,7 (2.15 → 1.28). À 60° le soleil
-tombait presque à la verticale et **aplatissait tout le relief**.
+Soleil descendu de **51° à 27°** d'élévation réelle, réchauffé et renforcé
+(2.35 → 2.72) ; ambiante hémisphérique divisée par 1,7 (2.15 → 1.28). À 51° le
+soleil tombait de trois quarts et **aplatissait le relief**.
 
 ### 2.4 Le ciel — §23, §24
 

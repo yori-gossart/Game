@@ -70,11 +70,17 @@ bâtie dans un lac**, et personne ne l'avait vu avant de regarder une capture.
 | | avant | après |
 | --- | --- | --- |
 | Hémisphérique | `0xf7fbff / 0x645c42`, 2.15 | `0xdff0ff / 0x4f5c38`, **1.28** |
-| Directionnelle | `0xffe5ad`, 2.35, position (−42, 60, 24) | `0xfff0d4`, **2.72**, position (−58, **33**, 26) |
+| Directionnelle | `0xffe5ad`, 2.35, position (−42, 60, 24) | `0xfff0d4`, **2.72**, position (−58, 33, 26) |
 
-Le soleil est descendu de 60 à 33 : à 60, il tombait presque à la verticale et
-**aplatissait tout le relief**. Bas et chaud, il rase les mottes et les
-sculpte. L'ambiante a baissé d'autant, sinon rien n'a d'ombre.
+En élévation réelle — c'est l'angle qui compte, pas la coordonnée y — le soleil
+est descendu de **51° à 27°**. À 51° il tombait de trois quarts et
+**aplatissait le relief** ; à 27° il le rase et le sculpte. L'ambiante a baissé
+d'autant, sinon rien n'a d'ombre.
+
+*(Ces deux angles sont ceux que `?lighttest` affiche. La première rédaction de
+ce document annonçait « de 60° à 33° » : c'étaient les coordonnées y des deux
+positions, pas des élévations. Le panneau du §53 a corrigé son propre
+document — ce qui est à peu près sa raison d'être.)*
 
 ### 2.4 Le ciel
 

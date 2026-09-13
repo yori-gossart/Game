@@ -649,3 +649,177 @@ export function bindFogTest({ game, player, horizon }) {
       `profondeur ±${n.map((l) => l.depth.toFixed(0)).join(" ")} u`;
   };
 }
+
+
+/**
+ * ?art072 — LE BANC DE LA PASSE D'ART.
+ *
+ * Il ne mesure rien que `?fogtest` ne mesure ; il sert à ITÉRER. Toute la
+ * 0.7.2 s'est jouée sur une boucle « changer, aller voir le plan concerné,
+ * comparer » — et sans ce panneau chaque aller-retour coûtait de rejouer le
+ * prologue jusqu'au camp. Les six plans sont ceux de `tests/captures.mjs`,
+ * délibérément : le banc automatique et le banc à la main doivent regarder les
+ * MÊMES images, sinon on règle un plan que la capture ne montre pas.
+ *
+ * Le niveau de qualité est affiché en gros parce que c'est lui qui a fait
+ * photographier un monde dégradé pendant toute une journée.
+ */
+export function bindArtTest({ game, player, horizon }) {
+  const panel = document.createElement("div");
+  panel.id = "fogtest-vue";
+  panel.classList.add("art072");
+
+  const lecture = document.createElement("div");
+  lecture.className = "lecture";
+  panel.appendChild(lecture);
+
+  const barre = document.createElement("div");
+  barre.className = "barre";
+  panel.appendChild(barre);
+
+  const bouton = (texte, titre, action) => {
+    const b = document.createElement("button");
+    b.textContent = texte;
+    if (titre) b.title = titre;
+    b.onclick = (e) => { e.preventDefault(); action(b); };
+    barre.appendChild(b);
+    return b;
+  };
+
+  // --- les six plans du banc de captures --------------------------------
+  bouton("① réveil", "Le tout premier plan du jeu", () => {
+    horizon.restartRun();
+  });
+  bouton("② brume", "Se retourner, mur à 55 u", () => {
+    horizon.setYaw(Math.PI);
+    horizon.setPitch(0.22);
+    horizon.setFogGap(55);
+  });
+  bouton("③ forêt", "Plein jour, brume loin", () => {
+    horizon.setYaw(0);
+    horizon.setFogGap(140);
+  });
+  bouton("④ camp", "Aller au camp du convoi", () => {
+    const pr = horizon.prologue;
+    if (!pr?.ancrage) return;
+    horizon.teleport(pr.ancrage.x, pr.ancrage.z + pr.scene.traces.z + 210);
+    horizon.setFogGap(215);
+  });
+  bouton("⑤ stèle", "Aller à la structure ancienne", () => {
+    const pr = horizon.prologue;
+    if (!pr?.ancrage) return;
+    horizon.teleport(pr.ancrage.x, pr.ancrage.z + pr.scene.pilier.z + 210);
+    horizon.setFogGap(215);
+  });
+
+  // --- ce qu'on isole pour savoir ce qui coûte et ce qui se voit --------
+  for (const [cle, texte] of [["herbes", "herbe"], ["structures", "structures"],
+                              ["rochers", "rochers"], ["houppiers", "arbres"]]) {
+    const b = bouton(`◐ ${texte}`, `Masquer ${texte} : c'est ainsi qu'on voit ce que ça apportait`,
+      () => {
+        const on = horizon.basculerFamille?.(cle);
+        b.classList.toggle("actif", on === false);
+      });
+  }
+
+  document.body.appendChild(panel);
+
+  let cumul = 0;
+  return function updateArtTest(delta) {
+    cumul += delta;
+    if (cumul < 0.35) return;
+    cumul = 0;
+    const i = horizon.info;
+    lecture.textContent =
+      `QUALITÉ ${i.qualite.toUpperCase()}${i.qualiteImposee ? " (imposée)" : " (adaptative)"}` +
+      `   décor ×${i.decor}\n` +
+      `rendu   ${i.calls} appels   ${i.tris} triangles   ${i.geometries} géométries\n` +
+      `monde   portée ${horizon.engine.chunkRadius * horizon.engine.chunkSize} u   ` +
+      `${horizon.engine.chunkRadius * 2 + 1}² chunks\n` +
+      `caméra  lacet ${horizon.yaw.toFixed(2)}   incl ${horizon.pitch.toFixed(2)}   ` +
+      `z ${player.position.z.toFixed(0)}\n` +
+      `brume   ${game.fogGap.toFixed(0)} u   ${game.fogLayers.length} nappes`;
+  };
+}
+
+/**
+ * ?lighttest — LA LUMIÈRE, RÉGLÉE EN LA REGARDANT.
+ *
+ * La 0.7.2 a descendu le soleil de 60° à 33° d'élévation, et c'est ce seul
+ * réglage qui a rendu le relief visible : à 60° il tombait presque à la
+ * verticale et aplatissait tout. Trouver ce chiffre a demandé sept captures.
+ * Ce panneau le fait en sept secondes, et il sert autant à vérifier qu'à
+ * régler : « + net » et « + plat » montrent immédiatement de quoi dépend la
+ * lecture du terrain.
+ */
+export function bindLightTest({ horizon }) {
+  const panel = document.createElement("div");
+  panel.id = "fogtest-vue";
+  panel.classList.add("lighttest");
+
+  const lecture = document.createElement("div");
+  lecture.className = "lecture";
+  panel.appendChild(lecture);
+
+  const L = horizon.lumieres;
+  const etat = { ...L.defaut };
+  const poser = () => L.appliquer(etat);
+
+  const reglage = (nom, cle, pas, min, max) => {
+    const ligne = document.createElement("div");
+    ligne.className = "barre";
+    const moins = document.createElement("button");
+    moins.textContent = `− ${nom}`;
+    const plus = document.createElement("button");
+    plus.textContent = "+";
+    moins.onclick = (e) => {
+      e.preventDefault();
+      etat[cle] = Math.max(min, +(etat[cle] - pas).toFixed(2));
+      poser();
+    };
+    plus.onclick = (e) => {
+      e.preventDefault();
+      etat[cle] = Math.min(max, +(etat[cle] + pas).toFixed(2));
+      poser();
+    };
+    ligne.append(moins, plus);
+    panel.appendChild(ligne);
+  };
+
+  reglage("élévation", "elevation", 4, 5, 88);
+  reglage("azimut", "azimut", 12, -180, 180);
+  reglage("soleil", "intensite", 0.15, 0, 5);
+  reglage("ambiante", "ambiante", 0.12, 0, 4);
+
+  const barre = document.createElement("div");
+  barre.className = "barre";
+  const preset = (texte, titre, valeurs) => {
+    const b = document.createElement("button");
+    b.textContent = texte;
+    b.title = titre;
+    b.onclick = (e) => { e.preventDefault(); Object.assign(etat, valeurs); poser(); };
+    barre.appendChild(b);
+  };
+  preset("0.7.2", "Les valeurs livrées", L.defaut);
+  preset("+ plat", "Le réglage 0.7.1 : soleil haut, ambiante forte — le relief disparaît",
+         { elevation: 60, azimut: -120, intensite: 2.35, ambiante: 2.15 });
+  preset("+ net", "Soleil très bas : le relief est sculpté, les ombres s'allongent",
+         { elevation: 14, azimut: -70, intensite: 3.1, ambiante: 0.9 });
+  panel.appendChild(barre);
+
+  document.body.appendChild(panel);
+  poser();
+
+  let cumul = 0;
+  return function updateLightTest(delta) {
+    cumul += delta;
+    if (cumul < 0.35) return;
+    cumul = 0;
+    lecture.textContent =
+      `LUMIÈRE\n` +
+      `élévation ${etat.elevation.toFixed(0)}°   azimut ${etat.azimut.toFixed(0)}°\n` +
+      `soleil ${etat.intensite.toFixed(2)}   ambiante ${etat.ambiante.toFixed(2)}\n` +
+      `livré : élév ${L.defaut.elevation}°  az ${L.defaut.azimut}°  ` +
+      `sol ${L.defaut.intensite}  amb ${L.defaut.ambiante}`;
+  };
+}

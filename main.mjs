@@ -1,6 +1,7 @@
 import * as THREE from "./vendor/three/three.module.min.js";
 import { createFogNomad } from "./fognomad.mjs";
-import { bindRunUI, bindPerfOverlay, bindWorldTest, bindPrologueTest, bindFogTest } from "./fognomad-ui.mjs";
+import { bindRunUI, bindPerfOverlay, bindWorldTest, bindPrologueTest, bindFogTest,
+         bindArtTest, bindLightTest } from "./fognomad-ui.mjs";
 import { demarrerAudio, mettreAJourAudio, sons, audioDisponible } from "./audio.mjs";
 import { createWorldDirector, worldContext, WORLD } from "./worlddirector.mjs";
 import { createLiving, LIVING } from "./living.mjs";
@@ -249,6 +250,34 @@ const PROLOGUETEST = PARAMS.has("prologuetest");
    la révélation coûtait quinze minutes de prologue à chaque essai : le
    prologue s'arrête de lui-même dès que « FUIS » est donné, et se relance. */
 const INTROTEST = PARAMS.has("introtest");
+/* ?art072 (§52) et ?lighttest (§53) — les deux bancs d'observation de la
+   passe d'art. Ils n'ajoutent aucune mécanique et ne changent rien au jeu
+   quand ils ne sont pas demandés. */
+const ART072 = PARAMS.has("art072");
+const LIGHTTEST = PARAMS.has("lighttest");
+
+/**
+ * `?seed=` — la graine du monde, imposée.
+ *
+ * Le banc de parcours (`tests/prologue07.mjs`) chargeait la page SANS graine :
+ * chaque parcours jouait un monde différent, et le prologue tirait en plus la
+ * distance de maintien de la Brume à `Math.random()`. Deux passages du même
+ * code donnaient donc deux résultats, et un échec ne voulait rien dire — le
+ * parcours « normal » survit ou meurt selon un tirage de huit unités fait à la
+ * dixième seconde. Ce n'est pas une régression qu'on peut attribuer.
+ *
+ * La graine est lue AVANT la sauvegarde : une graine imposée gagne toujours,
+ * sinon un test hériterait du monde de la partie précédente.
+ */
+const GRAINE_IMPOSEE = (() => {
+  const v = Number(PARAMS.get("seed"));
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : null;
+})();
+
+/** Une graine fraîche, ou celle qu'on impose. */
+function graineNeuve() {
+  return GRAINE_IMPOSEE ?? Math.floor(100000 + Math.random() * 899999);
+}
 const FOGTEST = PARAMS.has("fogtest") || DIAG || WORLDTEST;
 /* Le prologue est l'ouverture normale du jeu. Les modes de mesure le sautent :
    ils testent le monde procédural, pas la mise en scène, et une ouverture de
@@ -400,8 +429,42 @@ let elapsedTotal = 0;
 const DANGER_DISTANCE = 95;
 const FOG_TINT_SAFE = new THREE.Color(FOG_COLOR);
 const FOG_TINT_DANGER = new THREE.Color(0x4a3c58);
-const SUN_INTENSITY = sunLight.intensity;
-const HEMI_INTENSITY = hemiLight.intensity;
+let SUN_INTENSITY = sunLight.intensity;
+let HEMI_INTENSITY = hemiLight.intensity;
+
+/**
+ * Le réglage de lumière LIVRÉ, en coordonnées lisibles.
+ *
+ * Les positions cartésiennes de `sunLight` ne se règlent pas à la main : ce
+ * qui compte est l'élévation — c'est elle, descendue de 60° à 33°, qui a rendu
+ * le relief du terrain visible en 0.7.2. On garde donc les deux formes, et
+ * `?lighttest` (§53) manipule la lisible.
+ */
+const LUMIERE_DEFAUT = (() => {
+  const p = sunLight.position;
+  const d = Math.hypot(p.x, p.z);
+  return {
+    elevation: Math.round((Math.atan2(p.y, d) * 180) / Math.PI),
+    azimut: Math.round((Math.atan2(p.x, p.z) * 180) / Math.PI),
+    intensite: sunLight.intensity,
+    ambiante: hemiLight.intensity,
+  };
+})();
+
+/** Repose le soleil à partir d'une élévation et d'un azimut, en degrés. */
+function poserLumiere({ elevation, azimut, intensite, ambiante }) {
+  const RAYON = 72;
+  const e = (elevation * Math.PI) / 180;
+  const a = (azimut * Math.PI) / 180;
+  const plan = Math.cos(e) * RAYON;
+  sunLight.position.set(Math.sin(a) * plan, Math.sin(e) * RAYON, Math.cos(a) * plan);
+  sunLight.intensity = intensite;
+  hemiLight.intensity = ambiante;
+  // Les deux références servent d'assiette à l'assombrissement par la Brume :
+  // sans ça, le premier pas dans le danger annulerait le réglage.
+  SUN_INTENSITY = intensite;
+  HEMI_INTENSITY = ambiante;
+}
 
 const CAMERA_PITCH_MIN = 0.12;
 const CAMERA_PITCH_MAX = 0.98;
@@ -2572,7 +2635,7 @@ function startNewRun() {
 function startNewWorld() {
   clearWorld();
 
-  worldSeed = Math.floor(100000 + Math.random() * 899999);
+  worldSeed = graineNeuve();
   activeChunkKey = "";
   cameraYaw = 0;
   cameraPitch = 0.5;
@@ -2590,8 +2653,14 @@ function startNewWorld() {
 function resumeOrCreateWorld() {
   clearWorld();
 
-  if (!loadGame()) {
-    worldSeed = Math.floor(100000 + Math.random() * 899999);
+  // Une graine imposée l'emporte sur la sauvegarde : sans ça, un banc lancé
+  // deux fois de suite rejouerait le monde du passage précédent.
+  if (GRAINE_IMPOSEE !== null) {
+    loadGame();
+    worldSeed = GRAINE_IMPOSEE;
+    player.position.set(1.5, 0, 1.5);
+  } else if (!loadGame()) {
+    worldSeed = graineNeuve();
     player.position.set(1.5, 0, 1.5);
   }
 
@@ -3282,6 +3351,8 @@ function animate() {
   if (updateWorldTest) updateWorldTest(reel);
   if (updatePrologueTest) updatePrologueTest(reel);
   if (updateFogTest) updateFogTest(reel);
+  if (updateArtTest) updateArtTest(reel);
+  if (updateLightTest) updateLightTest(reel);
 
   renderer.render(scene, camera);
 
@@ -3358,6 +3429,10 @@ const updateWorldTest = WORLDTEST ? bindWorldTest(renderer, recenserMonde) : nul
 const prologue = createPrologue({
   THREE, scene, camera, player, game, decors, living,
   terrainHeight, contaminable, sons, degagerZone, log: noterAsset,
+  // Le prologue tirait la distance de maintien de la Brume à `Math.random()`,
+  // ce qui rendait l'ouverture non reproductible même à graine imposée. Il
+  // reçoit maintenant le tirage du moteur, comme tout le reste du monde.
+  tirage: (sel) => random01(sel * 7 + 13, sel * 31 - 5, 971),
   /* Le prologue a besoin de FAIRE REGARDER le joueur derrière lui : la caméra
      est posée en +Z, dos à la direction de fuite, et le mur de brume est donc
      hors champ tant qu'on ne se retourne pas. Sans cela le plan central du
@@ -3390,6 +3465,12 @@ const updateFogTest = FOGTEST
 const updatePrologueTest = PROLOGUETEST
   ? bindPrologueTest({ prologue, game, player, etapes: ETAPES_PROLOGUE, renderer })
   : null;
+
+// Les deux bancs de la 0.7.2 lisent la sonde `HORIZON`, qui n'est posée que
+// beaucoup plus bas : ils sont donc bâtis après elle, et seulement déclarés
+// ici pour que la boucle d'images puisse les appeler.
+let updateArtTest = null;
+let updateLightTest = null;
 
 if (INTROTEST) {
   /* On surveille l'étape plutôt que d'instrumenter le prologue : le §V demande
@@ -3782,6 +3863,24 @@ window.HORIZON = {
   get fogSpeed() { return game.fogSpeed; },
   // Constantes du moteur, pour que les simulations d'équilibrage travaillent
   // sur les vraies valeurs au lieu de les recopier.
+  /** Le réglage de lumière, pour ?lighttest (§53). */
+  lumieres: {
+    defaut: LUMIERE_DEFAUT,
+    appliquer: poserLumiere,
+  },
+  /** Masquer une famille de décor, pour ?art072 (§52) : c'est en la retirant
+      qu'on voit ce qu'elle apportait. Renvoie son nouvel état. */
+  basculerFamille(cle) {
+    if (!(cle in diagVisible)) return null;
+    diagVisible[cle] = !diagVisible[cle];
+    for (const group of chunks.values()) {
+      for (const child of group.children) {
+        if (child.userData.kind === cle) child.visible = diagVisible[cle];
+      }
+    }
+    if (cle === "herbes") majCouvertBas();
+    return diagVisible[cle];
+  },
   engine: {
     playerSpeed: PLAYER_SPEED,
     runMultiplier: RUN_MULTIPLIER,
@@ -3945,3 +4044,7 @@ window.HORIZON = {
     return bad;
   }
 };
+
+// --- les bancs d'observation de la 0.7.2, une fois la sonde posée ---------
+if (ART072) updateArtTest = bindArtTest({ game, player, horizon: window.HORIZON });
+if (LIGHTTEST) updateLightTest = bindLightTest({ horizon: window.HORIZON });
