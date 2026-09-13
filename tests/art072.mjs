@@ -398,6 +398,30 @@ console.log("\n=== §14 LA RÉACTION DE LA BRUME ===");
   await page.close();
 }
 
+/* ═══ 4ter. LES TROIS ÉTIQUETTES DE VERSION DISENT LA MÊME CHOSE ══════════ */
+//
+// La page porte le numéro de version à TROIS endroits : le titre de l'onglet,
+// la meta description, et le bandeau de démarrage. Ils ont déjà divergé deux
+// fois — en 0.6a le titre annonçait 0.5 pendant que le bandeau annonçait 0.6a,
+// et en 0.7.2 les trois annonçaient encore 0.7.1 la veille du déploiement.
+// Personne ne l'a jamais vu en lisant le code ; personne ne le verra jamais.
+console.log("\n=== LES ÉTIQUETTES DE VERSION ===");
+{
+  const page = await ouvrir("?sansprologue&qualite=haute");
+  const v = await page.evaluate(() => {
+    const num = (t) => (t || "").match(/\d+\.\d+(\.\d+)?/)?.[0] || null;
+    return {
+      titre: num(document.title),
+      meta: num(document.querySelector('meta[name="description"]')?.content),
+      bandeau: num(document.querySelector(".brand span")?.textContent),
+    };
+  });
+  ok("version: les trois étiquettes de la page annoncent le même numéro",
+     !!v.titre && v.titre === v.meta && v.meta === v.bandeau,
+     `titre ${v.titre} · meta ${v.meta} · bandeau ${v.bandeau}`);
+  await page.close();
+}
+
 /* ═══ 5. LE FEU N'EST PAS UNE CONDITION DE SORTIE (§49) ═══════════════════ */
 console.log("\n=== §49 LE PROLOGUE N'EXIGE PAS DE FEU ===");
 {

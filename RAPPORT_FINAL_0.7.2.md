@@ -121,6 +121,79 @@ Même graine, même pilote, même profil :
 **Aucune régression de jeu.** La 0.7.2 se comporte comme la 0.7.1 sur le même
 monde.
 
+### Les trois parcours, à graine imposée
+
+`PROFILS=normal,rapide,exploration GRAINE=20260912` — **48 PASS / 0 FAIL**.
+
+| Profil | 0.7.1 (relevé d'époque) | 0.7.2, graine 20260912 |
+| --- | --- | --- |
+| **RAPIDE** | 10 min 13 s · 14/15 · 1 ramassage · **0 feu** · 38 kg | **10 min 13 s** · 14/15 · 1 · **0 feu** · 38 kg |
+| **NORMAL** | 10 min 53 s · 15/15 · 11 · **3 feux** · 45 kg | **10 min 55 s** · 15/15 · 10 · **3 feux** · 45 kg |
+| **EXPLORATION** | 12 min 3 s · 15/15 · 65 · **8 feux** · 60 kg | **12 min 1 s** · 15/15 · 52 · **8 feux** · 60 kg |
+
+Marges min/moy/max, 0.7.2 : rapide 54/130/171, normal 53/107/159, exploration
+52/91/159. Elles ne deviennent jamais confortables et ne tuent jamais.
+
+Le §50 demandait de vérifier que les huit feux de l'exploration ne s'étaient pas
+dégradés : **huit, inchangé.** Le parcours rapide reste à 14/15 parce qu'il
+n'allume aucun feu et ne franchit donc pas `FIRST_FIRE` — comportement voulu,
+pas défaut.
+
+Et la reproductibilité, maintenant qu'elle existe : deux exécutions successives
+du profil normal sur la même graine ont donné **655,5 s puis 655,4 s**.
+
+---
+
+## TESTS
+
+| Suite | Résultat |
+| --- | --- |
+| `regressions.mjs` | **31/31** |
+| `suite.mjs` | **32/32** |
+| `audit.mjs` | **27/27** |
+| `fog03.mjs` | **46/46** |
+| `world05.mjs` | **19/19** |
+| `prologue_negatifs.mjs` | **23/23** |
+| `art072.mjs` *(nouveau)* | **30/30** |
+| `memoire072.mjs` *(nouveau, §60)* | **8/8** |
+| `prologue07.mjs`, trois parcours | **48/48** |
+
+### Mémoire (§60)
+
+Prologue monté puis démonté, trois kilomètres de traversée par sauts de
+quatre-vingts unités, dix redémarrages :
+
+| | départ | après traversée | après 10 redémarrages |
+| --- | --- | --- | --- |
+| Géométries | 111 | 156 (oscille 144-163, **aucune dérive**) | 125 |
+| Textures | 10 | 10 | 10 |
+| Objets en scène | 572 | 543 | 521 |
+| Tas JS | 58 Mo | 45 Mo | 53 Mo |
+
+### Faux PASS et fausses mesures corrigés
+
+Quatre de mes propres assertions mesuraient mal. Les corriger valait mieux que
+de les contourner :
+
+- **la palette des deux structures** comparait aussi des matériaux à couleurs de
+  sommet, dont le `color` blanc n'est qu'un multiplicateur : tout « partageait
+  du blanc » ;
+- **le rythme des deux lumières** était jugé sur une amplitude, qui dépend de
+  l'endroit du cycle où l'échantillonnage tombe — 3,22 puis 0,70 pour la même
+  lumière. On compte maintenant les extrema, ce qui est une fréquence ;
+- **la hauteur d'une touffe** était lue sur la boîte du maillage FUSIONNÉ, donc
+  sur le relief du chunk : 0,35 puis 0,06 pour la même herbe. On isole les
+  sommets voisins d'un sommet — 0,89 et 0,94 sur deux passages ;
+- **le recul de la Brume** était lu dès l'étape franchie, ce qui donnait la
+  valeur finale tant que le mur se téléportait. Depuis qu'il recule sur 1,7 s,
+  la lecture tombait au milieu du mouvement — 105 u pour un recul de 110.
+
+Et une cinquième, dans `regressions.mjs`, qui n'était pas nouvelle : elle
+attendait **850 ms d'horloge** pour laisser la caméra se poser. Le couvert bas
+a alourdi la scène, 850 ms ne valent plus le même nombre d'images, et
+l'assertion est redevenue intermittente. **C'est la cinquième fois que ce
+projet apprend qu'on n'attend pas une horloge, on attend une condition.**
+
 ---
 
 ## LIMITES
@@ -166,6 +239,67 @@ une dizaine d'images par seconde. Les seules mesures rapportées sont celles qui
 ne dépendent pas du rendu : appels de dessin, triangles, géométries, textures.
 **La validation d'images par seconde appartient au Galaxy A55, donc à
 l'utilisateur.**
+
+---
+
+## COÛT DE RENDU
+
+Mesuré sur les six plans du banc de captures, graine 20260912, qualité imposée
+haute. Ces chiffres-là ne dépendent pas du rendu et transposent donc, à la
+différence des images par seconde.
+
+| Plan | Appels | Triangles | Géométries |
+| --- | --- | --- | --- |
+| `1-reveil` | 110 | 26 493 | 107 |
+| `2-brume-revelee` | 70 | 59 957 | 195 |
+| `3-foret` | 77 | 40 293 | 73 |
+| `3b-foret-brume-proche` | 77 | 40 293 | 73 |
+| `4-camp` | 89 | 56 253 | 147 |
+| `5-pilier` | 60 | 24 903 | 109 |
+
+Le camp entier tient en **six appels de dessin** — un maillage par matériau —
+et la stèle en deux. Le couvert bas coûte une cinquantaine de touffes par chunk
+mais n'est **affiché que sur les neuf chunks voisins** : au-delà de quarante
+mètres une touffe fait moins d'un pixel.
+
+Le banc de parcours vérifie par ailleurs `calls < 140` en fin de prologue, dans
+le monde procédural rendu à lui-même.
+
+---
+
+## DÉPLOIEMENT
+
+| | |
+| --- | --- |
+| Branche poussée | `fog-nomad-art-atmosphere-0.7.2` |
+| **Cible** | **`null` — PREVIEW** |
+| État | READY |
+
+Vérifié en lisant l'API, pas déduit. Les trois seuls déploiements de cible
+`production` du projet restent ceux de la 0.7, sur `claude/new-session-nrx5d6`,
+inchangés. Aucune branche de production, aucun alias, aucun domaine, aucun
+réglage de projet n'a été touché ; rien n'a été supprimé ; aucun projet Vercel
+n'a été créé.
+
+C'est ce contrôle qui manquait en 0.7 : le seul signe de l'incident avait été
+un champ dans une réponse d'API que personne n'avait lu.
+
+---
+
+## LES DEUX CHOSES À RETENIR
+
+**1. Un banc qui mesure autre chose que ce qu'on croit est pire que pas de
+banc.** Le banc de captures photographiait un monde en qualité basse, où
+l'herbe n'est même pas construite. Le banc de parcours jouait un monde
+différent à chaque passage, et l'issue du parcours normal se décidait sur un
+tirage de huit unités fait à la dixième seconde. Les deux ont été réparés
+avant de conclure quoi que ce soit — et c'est seulement après que la
+comparaison avec la 0.7.1 a pu dire quelque chose.
+
+**2. Sept défauts de cette version étaient du code correct qui ne produisait
+rien à l'écran.** Une nappe enroulée à l'envers, des ornières échantillonnées
+sur la mauvaise surface, un lerp qui extrapole, un arbre devant la caméra. Pas
+un seul n'était lisible dans le fichier. Tous l'étaient sur une capture.
 
 ---
 
