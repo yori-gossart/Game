@@ -1,10 +1,15 @@
-# Fog Nomad — Prologue 0.7.1
+# Fog Nomad — Prologue 0.7.2
 
 Prototype de jeu mobile bâti sur le moteur **Horizon 0.2**. Un monde beau et
 mourant, une brume qui le dévore derrière vous, et un sac qui vous ralentit
 d'autant plus que vous avez été avide.
 
-- Version courante — achèvement de la tranche verticale : collecte volontaire,
+- Version courante — passe d'art et d'atmosphère : portée doublée, terrain,
+  lumière, ciel, camp du convoi, stèle ancienne, couvert bas, ambiance sonore :
+  **`FOG_NOMAD_0.7.2_ART_ATMOSPHERE.md`**
+- Ce que la caméra voit réellement, et la règle qui en découle :
+  **`ART_DIRECTION_0.7.2.md`**
+- Étape précédente — achèvement de la tranche verticale : collecte volontaire,
   économie du feu, passe sur la Brume :
   **`FOG_NOMAD_0.7.1_VERTICAL_SLICE_COMPLETION.md`**
 - Incident de déploiement et sa réparation : **`DEPLOYMENT_RECOVERY_0.7.1.md`**

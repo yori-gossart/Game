@@ -1254,3 +1254,9 @@ body.prologue #intro { display: none !important; }
 
 #fogtest-vue .barre button:active,
 #fogtest-vue .barre button.actif { background: rgba(255, 255, 255, .34); }
+
+/* Les deux bancs de la 0.7.2 (?art072, ?lighttest) reprennent le châssis de
+   ?fogtest — même position, même typographie — mais ils peuvent coexister :
+   sans ce décalage, le second se posait exactement sur le premier. */
+#fogtest-vue.art072 { top: 150px; }
+#fogtest-vue.lighttest { top: 150px; left: 8px; right: auto; width: min(230px, calc(100vw - 16px)); }

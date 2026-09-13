@@ -143,6 +143,53 @@ aucun pack d'animaux. La règle du projet interdit d'utiliser un asset dont la
 licence n'a pas été lue chez son auteur : ils restent donc provisoires, et c'est
 rapporté comme tel plutôt que contourné.
 
+### 0.7.2 : toujours rien, et la vérification a été refaite
+
+La 0.7.2 est une passe d'art et d'atmosphère. Tout ce qu'elle ajoute est
+calculé dans le code :
+
+| Élément ajouté | D'où il vient |
+| --- | --- |
+| Terre battue, ornières, pas du camp | `BufferGeometry` construite sommet par sommet dans `prologue.mjs` (`nappeAuSol`) |
+| Feu froid, trépied, marmite | `CylinderGeometry` et `DodecahedronGeometry`, fusionnées par matériau |
+| Caisses, couvercle, bois empilé | `BoxGeometry` et `CylinderGeometry` |
+| Roue cassée | `TorusGeometry` + cinq rayons |
+| Toiles, natte, bannière | `PlaneGeometry` 4 × 3 déformée en plis dans le code |
+| Banc, lanterne, clôture du camp | `bench`, `post_lantern`, `fence_broken` — **déjà présents** dans le pack Halloween |
+| Stèle ancienne percée | quatre `BoxGeometry` autour d'une ouverture |
+| Cercle d'éclats | `CylinderGeometry` à cinq pans, facettée |
+| Dalle fendue | `nappeAuSol`, couleurs par sommet |
+| Couvert bas | quatre cônes ouverts fusionnés, écrits dans `main.mjs` |
+| Vent, insectes, oiseaux, bourdonnement des cristaux | synthétisés dans `audio.mjs`, aucun fichier |
+
+Contrôle refait au moment d'écrire ces lignes :
+
+```
+git diff --stat 3a7a0a4..HEAD -- assets/     →     (vide)
+```
+
+**ANIMAL VISUALS : PROVISIONAL.** La recherche d'un pack d'animaux sous licence
+vérifiable a été **refaite** en 0.7.2, et elle échoue toujours, pour deux
+raisons mesurées et non supposées :
+
+| Source | Résultat, mesuré le 13/09 |
+| --- | --- |
+| `kenney.nl` | pas de réponse — refusée par la politique réseau |
+| `quaternius.com` | pas de réponse |
+| `poly.pizza` | pas de réponse |
+| `opengameart.org` | pas de réponse |
+| `github.com/KayKit-Game-Assets` | **403** |
+| `api.github.com` (recherche de dépôts) | *« sessions are bound to their configured repositories »* |
+
+L'API GitHub de cette session est **restreinte au dépôt du projet** : elle ne
+permet ni de lister les dépôts d'un autre auteur ni d'en lire un fichier de
+licence. Il n'existe donc, dans cet environnement, aucun chemin pour lire une
+licence chez son auteur — et la règle du projet interdit d'utiliser un asset
+autrement.
+
+Les animaux restent les silhouettes procédurales de `living.mjs`. C'est
+rapporté comme une limite, pas contourné par un miroir qui les annonce CC0.
+
 ---
 
 ## 5. Ce qui n'a pas pu être vérifié, et n'est donc pas utilisé
