@@ -1652,6 +1652,13 @@ const ZONES_DEGAGEES = SANS_PROLOGUE ? [] : [
   { x: DEPART.x + SCENE_PROLOGUE.tour.x * 0.55, z: DEPART.z + SCENE_PROLOGUE.tour.z * 0.55, r: 30 },
   // Le sac, et la ligne de fuite juste devant.
   { x: DEPART.x, z: DEPART.z - 14, r: 11 },
+  // ET LA PLACE DE LA CAMÉRA.
+  //
+  // La zone du réveil est centrée à mi-chemin de la tour, donc DEVANT le
+  // joueur ; la caméra, elle, est onze unités DERRIÈRE lui, à trente-cinq
+  // unités de ce centre — hors du rayon de trente. Un conifère y poussait, et
+  // il barrait le coin inférieur droit de la toute première image du jeu.
+  { x: DEPART.x, z: DEPART.z + 8, r: 20 },
 ];
 
 /** Le prologue déclare une zone dégagée au moment où il pose une scène. */
