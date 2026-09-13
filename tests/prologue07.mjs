@@ -394,10 +394,28 @@ async function jouer(nom, profil, { observer = false } = {}) {
     }
     if (observer && !observations.pilier
         && etat.franchies.includes("FOG_REACTION")) {
-      observations.pilier = await page.evaluate(() => ({
-        cristal: window.HORIZON.game.inventory.cristal || 0,
-        ecartBrume: window.HORIZON.fogGap,
-      }));
+      // On attend que le recul SOIT FINI avant de le mesurer.
+      //
+      // En 0.7.1 la Brume était téléportée en une image : lire l'écart dès
+      // l'étape franchie donnait la valeur finale. Depuis le §14 de la 0.7.2
+      // elle recule sur 1,7 s en décélérant — la lecture immédiate tombe au
+      // milieu du mouvement (mesuré : 105 u pour un recul qui en fait 110).
+      // On attend donc que l'écart CESSE DE CROÎTRE, ce qui ne dépend
+      // d'aucune vitesse de rendu.
+      observations.pilier = await page.evaluate(async () => {
+        const H = window.HORIZON;
+        let precedent = -1, stable = 0;
+        for (let i = 0; i < 80 && stable < 3; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          const g = H.fogGap;
+          stable = g <= precedent + 0.5 ? stable + 1 : 0;
+          precedent = Math.max(precedent, g);
+        }
+        return {
+          cristal: H.game.inventory.cristal || 0,
+          ecartBrume: precedent,
+        };
+      });
     }
 
     if (etat.mort) break;

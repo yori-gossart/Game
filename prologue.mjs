@@ -1175,7 +1175,11 @@ export function createPrologue(deps) {
     let objet;
 
     if (type === "animal") {
-      objet = new THREE.Mesh(p.animalGeo, p.materiaux.fourrure);
+      // Le condamné est de la GRANDE espèce. C'est la silhouette qu'on voit se
+      // faire rattraper, et c'est le seul plan du prologue où l'on regarde un
+      // animal pendant plusieurs secondes : il vaut mieux qu'il ait une allure.
+      objet = new THREE.Mesh(condamne ? (p.cervidGeo || p.animalGeo) : p.animalGeo,
+                             p.materiaux.fourrure);
     } else {
       objet = new THREE.Group();
       objet.add(new THREE.Mesh(p.nomadeCorpsGeo, p.materiaux.manteau));

@@ -227,6 +227,40 @@ export function createLiving(ctx) {
     { geo: new THREE.SphereGeometry(0.075, 5, 4), pos: [0, 0.38, -0.34] }
   ]);
 
+  /**
+   * Deuxième silhouette : haute sur pattes, encolure dressée.
+   *
+   * ANIMAL VISUALS : PROVISIONAL — aucun modèle d'animal sous licence
+   * vérifiable n'est atteignable depuis cet environnement (voir
+   * ASSET_LICENSES.md, la recherche a été refaite en 0.7.2). À défaut d'un
+   * vrai modèle, le §37 demande au moins d'améliorer la silhouette : le monde
+   * n'était peuplé que d'un SEUL animal cloné, et deux exemplaires côte à côte
+   * se reconnaissaient immédiatement comme le même objet. Celui-ci est deux
+   * fois plus haut, ses pattes sont fines et longues, et son cou change tout
+   * de sa lecture à trente mètres — c'est la seule distance qui compte.
+   */
+  const cervidGeo = assembler([
+    // corps, plus court et plus haut que celui du petit quadrupède
+    { geo: new THREE.CapsuleGeometry(0.17, 0.34, 3, 6), rot: [0, 0, Math.PI / 2],
+      pos: [0, 0.72, 0] },
+    // encolure : c'est elle qui fait la silhouette
+    { geo: new THREE.CylinderGeometry(0.075, 0.11, 0.46, 5), rot: [0.42, 0, 0],
+      pos: [0, 0.98, 0.24] },
+    { geo: new THREE.SphereGeometry(0.115, 6, 5), pos: [0, 1.19, 0.42],
+      scale: [1, 0.9, 1.35] },
+    // oreilles hautes, écartées
+    { geo: new THREE.ConeGeometry(0.045, 0.2, 4), rot: [-0.3, 0, 0.34],
+      pos: [-0.08, 1.33, 0.38] },
+    { geo: new THREE.ConeGeometry(0.045, 0.2, 4), rot: [-0.3, 0, -0.34],
+      pos: [0.08, 1.33, 0.38] },
+    // quatre pattes fines : la différence la plus lisible de loin
+    { geo: new THREE.CylinderGeometry(0.032, 0.026, 0.62, 4), pos: [-0.11, 0.31, 0.2] },
+    { geo: new THREE.CylinderGeometry(0.032, 0.026, 0.62, 4), pos: [0.11, 0.31, 0.2] },
+    { geo: new THREE.CylinderGeometry(0.032, 0.026, 0.62, 4), pos: [-0.11, 0.31, -0.18] },
+    { geo: new THREE.CylinderGeometry(0.032, 0.026, 0.62, 4), pos: [0.11, 0.31, -0.18] },
+    { geo: new THREE.ConeGeometry(0.05, 0.16, 4), rot: [2.6, 0, 0], pos: [0, 0.78, -0.3] }
+  ]);
+
   /** Oiseau : un corps et deux ailes, vingt triangles en tout. */
   const oiseauGeo = assembler([
     { geo: new THREE.ConeGeometry(0.08, 0.3, 4), rot: [Math.PI / 2, 0, 0], pos: [0, 0, 0] },
@@ -302,7 +336,11 @@ export function createLiving(ctx) {
     if (y < -1.2) return;
 
     const sombre = hasard(3 + index, 5) < 0.4;
-    const mesh = new THREE.Mesh(animalGeo, sombre ? M.fourrureSombre : M.fourrure);
+    // Une bête sur trois est de la grande espèce : assez pour que le monde ne
+    // soit pas peuplé de clones, assez rare pour qu'elle reste remarquable.
+    const grand = hasard(11 + index, 19) < 0.34;
+    const mesh = new THREE.Mesh(grand ? cervidGeo : animalGeo,
+                                sombre ? M.fourrureSombre : M.fourrure);
     mesh.position.set(lx, y, lz);
     mesh.rotation.y = hasard(9 + index, 3) * Math.PI * 2;
     const taille = 0.8 + hasard(15 + index, 7) * 0.5;
@@ -311,7 +349,7 @@ export function createLiving(ctx) {
     group.add(mesh);
 
     enregistrer(cle, {
-      type: "animal", mesh, group,
+      type: "animal", mesh, group, grand,
       baseX: centerX + lx, baseZ: centerZ + lz,
       cap: hasard(21 + index, 13) * Math.PI * 2,
       phase: hasard(23 + index, 17) * 6.28,
@@ -515,7 +553,16 @@ export function createLiving(ctx) {
     if (e.type === "animal") {
       const v = e.fuite ? LIVING.animal.vitesseFuite : LIVING.animal.vitesse;
       const bouge = e.fuite || Math.sin(horloge * 0.8 + e.phase) > -0.2;
-      if (!bouge) return;
+      if (!bouge) {
+        // À l'arrêt, elle broute : le corps entier bascule lentement vers
+        // l'avant puis se redresse. Un maillage fusionné n'a pas de cou
+        // articulé, mais l'inclinaison suffit à la distance où on la voit —
+        // et une bête parfaitement immobile est une statue.
+        const t = Math.sin(horloge * 0.5 + e.phase * 1.7);
+        e.mesh.rotation.x = Math.max(0, t) * (e.grand ? 0.34 : 0.22);
+        return;
+      }
+      e.mesh.rotation.x = 0;
 
       const m = e.mesh;
       m.position.x += Math.sin(e.cap) * v * delta;
@@ -527,7 +574,13 @@ export function createLiving(ctx) {
       m.position.y = terrainHeight(mondeX, mondeZ);
 
       // Petit bond : une course qui ne saute pas ressemble à un glissement.
-      if (e.fuite) m.position.y += Math.abs(Math.sin(horloge * 11 + e.phase)) * 0.16;
+      // Le grand animal saute plus haut et moins vite — c'est la seule chose
+      // qui distingue les deux espèces en mouvement, et elle se voit.
+      if (e.fuite) {
+        const cadence = e.grand ? 8 : 11;
+        m.position.y += Math.abs(Math.sin(horloge * cadence + e.phase))
+                      * (e.grand ? 0.24 : 0.16);
+      }
       return;
     }
 
@@ -603,7 +656,7 @@ export function createLiving(ctx) {
      * différentes pour le même monde serait le défaut le plus visible qui soit.
      */
     get patrons() {
-      return { animalGeo, oiseauGeo,
+      return { animalGeo, cervidGeo, oiseauGeo,
                nomadeCorpsGeo, nomadeTeteGeo, nomadeEcharpeGeo,
                nomadeJambesGeo, nomadeSacGeo, materiaux: M };
     }
