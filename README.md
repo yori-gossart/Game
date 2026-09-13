@@ -4,6 +4,7 @@ Prototype de jeu mobile bâti sur le moteur **Horizon 0.2**. Un monde beau et
 mourant, une brume qui le dévore derrière vous, et un sac qui vous ralentit
 d'autant plus que vous avez été avide.
 
+- Rapport de la version courante : **`RAPPORT_FINAL_0.7.2.md`**
 - Version courante — passe d'art et d'atmosphère : portée doublée, terrain,
   lumière, ciel, camp du convoi, stèle ancienne, couvert bas, ambiance sonore :
   **`FOG_NOMAD_0.7.2_ART_ATMOSPHERE.md`**
