@@ -16,8 +16,30 @@ navigateur.
 | `ui05.mjs` | 47 | Living World 0.5 : modes de jeu, disposition du HUD, menu de sac, ration, `?worldtest` |
 | `art06.mjs` | 35 | 0.6 / 0.6a : visibilité du banc, assets, orientation du modèle, ancrage du sac, rigidité |
 | `prologue07.mjs` | 45-48 | 0.7 : le prologue **joué** d'un bout à l'autre, trois profils, quinze points de contrôle — le total dépend du nombre de profils joués (`PROFILS=`) |
-| `prologue_negatifs.mjs` | 22 | 0.7.1 : les **refus** — ce que le jeu ne doit PAS laisser franchir |
+| `prologue_negatifs.mjs` | 23 | 0.7.1 : les **refus** — ce que le jeu ne doit PAS laisser franchir |
+| `captures.mjs` | — | 0.7.2 : six plans FIXES à graine imposée. Ne juge rien : produit les images qu'on compare avant/après |
+| `art072.mjs` | 24 | 0.7.2 : la passe d'art **existe-t-elle à l'écran** — orientation des normales, densité du couvert bas, niveaux de qualité, palettes des deux structures |
+| `memoire072.mjs` | 10 | 0.7.2 : tenue en mémoire — prologue monté/démonté, trois kilomètres de traversée, dix redémarrages |
 | `simulate05.mjs` | — | quatre profils de jeu simulés sur la vraie `CONFIG`, sans navigateur |
+
+## Deux règles apprises à la dure
+
+**La graine est imposée partout.** `captures.mjs`, `prologue07.mjs` et
+`memoire072.mjs` chargent la page avec `?seed=`. Sans elle, deux passages du
+même code jouaient deux mondes, et le parcours « normal » du prologue survit
+ou meurt selon un tirage de huit unités fait à la dixième seconde : un échec
+ne pouvait pas être attribué.
+
+**La qualité est imposée aussi.** SwiftShader rend à une dizaine d'images par
+seconde ; l'adaptation automatique, qui ne sait pas qu'elle tourne en logiciel,
+descend jusqu'à `facteurDecor()` à zéro — plus une seule touffe d'herbe
+construite. Les bancs passent `?qualite=haute`. Un banc qui mesure autre chose
+que ce qu'on croit est pire que pas de banc.
+
+**Et jamais deux suites à la fois** : elles se volent des images et produisent
+des échecs qui n'existent pas. Pour les bancs longs, `sh tests/_snapshot.sh
+8124` sert une copie figée du dépôt sur un autre port, ce qui permet de
+continuer à écrire pendant la mesure.
 
 ## Lancer
 
@@ -31,6 +53,9 @@ node tests/regressions.mjs
 node tests/balance05.mjs
 node tests/ui05.mjs
 node tests/art06.mjs
+node tests/art072.mjs
+node tests/memoire072.mjs
+SHOT_DIR=.shots/apres node tests/captures.mjs   # les six plans, à comparer
 node tests/prologue07.mjs               # les trois parcours : ~90 min d'horloge
 PROFILS=normal node tests/prologue07.mjs   # un seul parcours, pour itérer
 node tests/prologue_negatifs.mjs        # les refus

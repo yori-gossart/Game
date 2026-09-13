@@ -25,6 +25,9 @@
 import { chromium, devices, CHROME, GL_ARGS } from "./_pw.mjs";
 
 const BASE = process.env.BASE_URL || "http://127.0.0.1:8123";
+/** La graine du monde. Imposée, et la même que celle du banc de captures :
+    les deux instruments doivent regarder le même monde. */
+const GRAINE = Number(process.env.GRAINE || 20260912);
 let pass = 0, fail = 0;
 const echecs = [];
 
@@ -310,7 +313,17 @@ async function jouer(nom, profil, { observer = false } = {}) {
   page.on("pageerror", (e) => erreurs.push(String(e)));
   page.on("console", (m) => { if (m.type() === "error") erreurs.push(m.text()); });
 
-  await page.goto(`${BASE}/index.html`, { waitUntil: "load", timeout: 90000 });
+  // GRAINE IMPOSÉE.
+  //
+  // Le banc chargeait la page sans graine : chaque parcours jouait un monde
+  // différent, et le prologue tirait en plus la distance de maintien de la
+  // Brume à `Math.random()`. Deux passages du même code donnaient donc deux
+  // résultats — et le parcours « normal » survit ou meurt selon un tirage de
+  // huit unités fait à la dixième seconde. Un échec ne pouvait pas être
+  // attribué, ce qui est exactement le défaut que ce banc est censé ne pas
+  // avoir.
+  await page.goto(`${BASE}/index.html?seed=${GRAINE}`,
+                  { waitUntil: "load", timeout: 90000 });
   await page.waitForFunction(() => window.HORIZON?.prologue, null, { timeout: 90000 });
   await page.waitForFunction(() => window.HORIZON.prologue.actif, null, { timeout: 120000 });
   profil.chargeMax = await page.evaluate(() => window.HORIZON.config.weight.max);
