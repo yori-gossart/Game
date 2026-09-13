@@ -18,8 +18,8 @@ navigateur.
 | `prologue07.mjs` | 45-48 | 0.7 : le prologue **joué** d'un bout à l'autre, trois profils, quinze points de contrôle — le total dépend du nombre de profils joués (`PROFILS=`) |
 | `prologue_negatifs.mjs` | 23 | 0.7.1 : les **refus** — ce que le jeu ne doit PAS laisser franchir |
 | `captures.mjs` | — | 0.7.2 : six plans FIXES à graine imposée. Ne juge rien : produit les images qu'on compare avant/après |
-| `art072.mjs` | 24 | 0.7.2 : la passe d'art **existe-t-elle à l'écran** — orientation des normales, densité du couvert bas, niveaux de qualité, palettes des deux structures |
-| `memoire072.mjs` | 10 | 0.7.2 : tenue en mémoire — prologue monté/démonté, trois kilomètres de traversée, dix redémarrages |
+| `art072.mjs` | 30 | 0.7.2 : la passe d'art **existe-t-elle à l'écran** — orientation des normales, densité du couvert bas, niveaux de qualité, palettes et rythmes des deux structures, recul animé de la Brume, étiquettes de version |
+| `memoire072.mjs` | 8 | 0.7.2 : tenue en mémoire — prologue monté/démonté, trois kilomètres de traversée, dix redémarrages |
 | `simulate05.mjs` | — | quatre profils de jeu simulés sur la vraie `CONFIG`, sans navigateur |
 
 ## Deux règles apprises à la dure
