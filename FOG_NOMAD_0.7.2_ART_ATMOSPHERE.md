@@ -193,6 +193,15 @@ Il n'existe, dans cet environnement, aucun chemin pour lire une licence chez
 son auteur. La règle du projet interdit d'utiliser un asset autrement. Les
 animaux restent les silhouettes procédurales de `living.mjs`.
 
+Le §37 demande, à défaut de modèle, d'améliorer la silhouette. C'est fait, et
+il y avait de quoi : **le monde entier était peuplé d'une seule géométrie
+clonée**. Deux exemplaires côte à côte se reconnaissaient immédiatement comme
+le même objet. Il y a désormais une seconde espèce — haute sur pattes,
+encolure dressée, une bête sur trois —, elle saute plus haut et moins vite en
+fuyant, et **les bêtes à l'arrêt broutent** au lieu de rester des statues. Le
+condamné du §14 est de la grande espèce : c'est le seul plan du prologue où
+l'on regarde un animal pendant plusieurs secondes.
+
 ### 4.2 L'instanciation
 
 Rien n'a été instancié. Le jeu de familles instanciées validé sur appareil est

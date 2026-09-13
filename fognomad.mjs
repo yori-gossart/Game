@@ -1808,6 +1808,11 @@ export function createFogNomad(ctx) {
         z: spec.z, crestY: spec.crestY, crest: spec.crest, depth: spec.depth,
         soft: spec.soft, alpha: spec.baseAlpha,
         visible: fogLayers[i].mesh.visible,
+        // 0.7.2 — le décalage COURANT de la nappe, pas seulement son repos.
+        // C'est la respiration en profondeur du §9 : sans ce chiffre, on ne
+        // peut pas vérifier que les quatre nappes cessent d'être parallèles,
+        // qui est exactement ce que la version a changé.
+        derive: +(fogLayers[i].mesh.position.z - fogLayers[i].baseZ).toFixed(2),
       }));
     },
     /** Masque tout sauf les nappes. C'est ce geste qui a établi, en 0.7, que

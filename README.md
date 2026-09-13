@@ -74,6 +74,10 @@ qui finit toujours par vous rattraper — reprend à la fin du prologue.
 | `?prologuetest` | panneau de conduite du prologue |
 | `?fogtest` | performance, et observation de la Brume à quatre distances |
 | `?introtest` | rejoue l'ouverture en boucle |
+| `?art072` | banc de la passe d'art : les six plans du banc de captures d'un bouton, qualité et budget affichés, familles de décor masquables |
+| `?lighttest` | élévation et azimut du soleil réglés à vue — c'est lui qui a corrigé une erreur de ce dépôt |
+| `?qualite=haute\|moyenne\|basse` | fige le niveau de qualité et coupe l'adaptation |
+| `?seed=<n>` | impose la graine du monde ; elle l'emporte sur la sauvegarde |
 
 Voir `PROLOGUE_TEST_PLAN.md`.
 

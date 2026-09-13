@@ -646,7 +646,11 @@ export function bindFogTest({ game, player, horizon }) {
       `${Math.abs(Math.abs(horizon.yaw) - Math.PI) < 0.6 ? "TOURNÉE VERS LA BRUME" : "dos à la Brume"}\n` +
       `nappes  ${n.map((l) => `${l.z >= 0 ? "+" : ""}${l.z} u`).join("  ")}\n` +
       `relief  crête ±${n.map((l) => l.crest.toFixed(2)).join(" ")}   ` +
-      `profondeur ±${n.map((l) => l.depth.toFixed(0)).join(" ")} u`;
+      `profondeur ±${n.map((l) => l.depth.toFixed(0)).join(" ")} u\n` +
+      // Les quatre nappes doivent cesser d'être parallèles : c'est tout
+      // l'objet de la respiration en profondeur du §9, et ça ne se lit que
+      // sur des dérives qui ne bougent pas ensemble.
+      `souffle ${n.map((l) => (l.derive >= 0 ? "+" : "") + l.derive.toFixed(1)).join("  ")} u`;
   };
 }
 
