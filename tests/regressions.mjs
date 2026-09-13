@@ -313,13 +313,23 @@ await wait(400);
 const vue = [];
 for (const marge of [40, 20, 12, 6, 2]) {
   // Deux précautions : la brume avance pendant l'attente, donc on recale la
-  // marge juste avant de mesurer ; et la caméra met quelques images à
-  // rejoindre sa nouvelle distance, donc on la laisse converger. Sans la
-  // seconde, la mesure à 2 unités oscillait entre 1 % et 58 %.
-  await H((g) => window.HORIZON.setFogGap(g), marge);
-  await wait(500);
-  await H((g) => window.HORIZON.setFogGap(g), marge);
-  await wait(350);
+  // marge à chaque tour ; et la caméra met quelques IMAGES à rejoindre sa
+  // nouvelle distance. Sans la seconde, la mesure à 2 unités oscillait entre
+  // 1 % et 58 %.
+  //
+  // Elle attendait 850 ms d'HORLOGE, et c'est la cinquième fois que ce projet
+  // se fait avoir : le couvert bas de la 0.7.2 a alourdi la scène, 850 ms ne
+  // valent plus le même nombre d'images, et l'assertion est redevenue
+  // intermittente. On attend maintenant la CONDITION — la caméra posée —, ce
+  // qui ne dépend d'aucune vitesse de rendu.
+  await page.waitForFunction((g) => {
+    window.HORIZON.setFogGap(g);
+    const z = window.HORIZON.camPos.z;
+    const stable = window.__camZ !== undefined && Math.abs(z - window.__camZ) < 0.02;
+    window.__camZ = z;
+    return stable;
+  }, marge, { timeout: 20000, polling: 120 });
+  await H(() => { delete window.__camZ; });
 
   const mesure = await H((g) => {
     window.HORIZON.setFogGap(g);
