@@ -272,10 +272,16 @@ le monde procédural rendu à lui-même.
 | | |
 | --- | --- |
 | Branche poussée | `fog-nomad-art-atmosphere-0.7.2` |
+| Commit | `044eef6` |
+| Déploiement | `dpl_AZKHLQGzDMrh46GRJTppWQfiU9Uo` |
 | **Cible** | **`null` — PREVIEW** |
 | État | READY |
+| **URL** | https://horizon-proto-git-fog-nomad-art-atmosphere-072-nutricyclev01a.vercel.app |
 
-Vérifié en lisant l'API, pas déduit. Les trois seuls déploiements de cible
+Vérifié en lisant l'API, pas déduit. **Et la page a été récupérée et lue** :
+HTTP 200, `x-robots-tag: noindex`, les trois étiquettes annoncent 0.7.2, le
+bloc du prologue est présent. C'est le contrôle de la 0.7.1 — on ne se contente
+pas d'un déploiement READY, on regarde ce qu'il sert. Les trois seuls déploiements de cible
 `production` du projet restent ceux de la 0.7, sur `claude/new-session-nrx5d6`,
 inchangés. Aucune branche de production, aucun alias, aucun domaine, aucun
 réglage de projet n'a été touché ; rien n'a été supprimé ; aucun projet Vercel
